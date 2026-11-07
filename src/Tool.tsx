@@ -141,7 +141,7 @@ export default function Tool() {
   const runStress = async () => {
     const d = fleet?.depots.find((x) => x.lat || x.lng)
     let w = climateStressWeek(settings)
-    // stress week uses the first depot's location. Per-depot weeks if a fleet spans climate zones.
+    // Stress week uses the first depot's location. Per-depot weeks if a fleet spans climate zones.
     if (d) {
       try {
         w = await fetchColdestWeek(d.lat, d.lng)

@@ -55,7 +55,7 @@ export function filterPoints(points: GpsPoint[], maxKph: number): { kept: GpsPoi
   return { kept, jumps, invalid }
 }
 
-// every-Nth downsampling for the map line only. Douglas-Peucker if corners look wrong at high zoom.
+// Every-Nth downsampling for the map line only. Douglas-Peucker if corners look wrong at high zoom.
 function thin(path: LatLng[], max = 120): LatLng[] {
   if (path.length <= max) return path
   const step = (path.length - 1) / (max - 1)

@@ -89,7 +89,7 @@ const MONTHS = 'jan feb mar apr may jun jul aug sep oct nov dec'.split(' ')
 /**
  * Parses a timestamp to fleet-local milliseconds. Wall-clock stamps are kept as written. Stamps with an offset
  * or Z are shifted by the longitude-derived zone.
- * longitude approximates the zone and ignores DST. Good enough to find "overnight"; use a tz database if hour-level precision matters.
+ * Longitude approximates the zone and ignores DST. Good enough to find "overnight"; use a tz database if hour-level precision matters.
  */
 export function parseTime(raw: string, lng?: number): number | null {
   const s = raw.trim()
