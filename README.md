@@ -12,19 +12,22 @@ Geotab sells an EV suitability assessment. This is an independent, open take on 
 
 ## Features
 
-- **Import:** GPX, GPS-point CSV or trip-summary CSV with column mapping, for generic telematics exports. Trip segmentation by stop duration, GPS noise and jump filtering, idling detection, depot inference and return-to-base scoring.
+- **Import:** GPX, GPS-point CSV, trip-summary CSV, or MyGeotab API `LogRecord`/`Trip` results saved as JSON. CSV layouts checked against the MyGeotab API Adapter (`LogRecords2`, `Trips2`), GPSLogger for Android (semicolons, decimal commas, m/s) and headerless files such as T-Drive. Units are read from headers; idle time can be minutes, seconds, .NET ticks or `hh:mm:ss`. Trip segmentation by stop duration, GPS noise and jump filtering, idling detection, depot inference and return-to-base scoring.
 - **Weather:** historical temperature per trip from the Open-Meteo archive, cached, with an editable climate profile as the offline fallback. The winter stress test replays the coldest week in five years for that location.
 - **Catalogue:** a dated constants file with sources per model, editable and user-addable. It flags ended production (BrightDrop, F-150 Lightning) and which figures could not be confirmed.
 - **Energy model:** per-trip kWh from distance, speed bands, the temperature curve, HVAC and payload, all configurable.
 - **Simulation:** day-by-day state of charge with shared chargers, a least-slack overnight scheduler, optional mid-day top-ups and a required buffer. Every failed day is tested to find out why it failed.
 - **Outputs:** days completed, failure days and reasons, best-fit model, depot charger count and peak kW, 5 to 10-year TCO with a crossover year, CO2, and rollout phases.
 - **Views:** Leaflet map with animated trips coloured by state of charge, vehicle-by-day heatmap, a temperature slider that reflows the whole fleet, charging Gantt with load curve, and a TCO crossover chart.
+- **Live prices:** one click pulls the latest monthly pump price for the nearest Canadian city (Statistics Canada table 18-10-0001-01) and the USD/CAD rate (Bank of Canada Valet API).
 - **Export:** CSV, a print-friendly report, and a shareable URL holding settings only.
 - **Samples:** all synthetic, on real road geometry. Toronto delivery vans, rural Alberta service trucks, and a Hamilton mixed fleet with a payload problem.
 
 ## Privacy
 
-Your GPS data stays in the browser: there is no server, and share links carry settings only. Two things use the network. Open-Meteo receives each depot location rounded to about 10 km plus a date range. The OpenStreetMap tile server sees the area you are viewing.
+Your GPS data stays in the browser: there is no server, and share links carry settings only. Two things use the network by default, and a third on request. Open-Meteo receives each depot location rounded to about 10 km plus a date range. The OpenStreetMap tile server sees the area you are viewing. The "latest official prices" button sends Statistics Canada a city id only.
+
+Formats, sources and their dates are listed at [/docs](https://fleet-ev-lab.vercel.app/docs).
 
 ## Model limits
 
@@ -32,6 +35,7 @@ Your GPS data stays in the browser: there is no server, and share links carry se
 - Vehicle specs and default prices are starting points, not quotes. Unconfirmed figures are flagged per model.
 - Time zones are approximated from longitude, without DST. That is enough to find "overnight", not for hour-level tariffs.
 - Depot plugs are not preempted once a session starts.
+- Pump prices cover Canadian cities only. MyGeotab .xlsx reports need saving as CSV first.
 - Incentives default to none. Status was checked on 2026-11-05 and is listed in the app.
 
 ## Run locally

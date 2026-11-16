@@ -80,6 +80,13 @@ export function guessMapping(header: string[]): { kind: 'points' | 'trips'; map:
       }
     }
   }
+  // Second pass with a trailing unit dropped, so "Load (lb)" or "Odometer mi" still map; units are read from the original name.
+  const bare = cols.map((c) => c.replace(/\s*\(?\b(km\/h|kph|mph|m\/s|km|mi|miles|kg|lbs?|min|minutes|s|sec|seconds)\)?$/, ''))
+  for (const f of fields) {
+    if (map[f] !== undefined) continue
+    const at = bare.findIndex((c, i) => SYN[f].includes(c) && !Object.values(map).includes(i))
+    if (at >= 0) map[f] = at
+  }
   const kind = map.lat !== undefined && map.lng !== undefined && map.timestamp !== undefined ? 'points' : 'trips'
   return { kind, map, units: unitsFromHeader(cols, map) }
 }
@@ -175,6 +182,9 @@ const num = (s: string | undefined) => {
   return Number.isFinite(n) ? n : undefined
 }
 
+/** Coordinates never carry a thousands separator, so any comma is a decimal comma. */
+const coord = (s: string | undefined) => num(s?.replace(',', '.'))
+
 /** Duration in minutes from a plain number in the given unit, or a "[d.]hh:mm[:ss[.fffffff]]" span as MyGeotab and .NET write it. */
 export function parseDurationMin(s: string | undefined, unit: Units['idle'] = 'min'): number | undefined {
   const t = s?.trim()
@@ -202,8 +212,8 @@ export function rowsToPoints(rows: string[][], map: ColumnMap, units: Units = DE
   const sk = SPEED_K[units.speed] ?? 1
   const lk = units.load === 'lb' ? 0.453592 : 1
   for (const r of rows) {
-    const lat = num(r[map.lat ?? -1])
-    const lng = num(r[map.lng ?? -1])
+    const lat = coord(r[map.lat ?? -1])
+    const lng = coord(r[map.lng ?? -1])
     const t = parseTime(r[map.timestamp ?? -1] ?? '', lng)
     if (lat === undefined || lng === undefined || t === null) {
       bad++
@@ -237,8 +247,8 @@ export function rowsToTrips(rows: string[][], map: ColumnMap, units: Units = DEF
   const dk = units.distance === 'mi' ? 1.60934 : 1
   const lk = units.load === 'lb' ? 0.453592 : 1
   for (const r of rows) {
-    const startLng = num(r[map.startLng ?? -1])
-    const endLng = num(r[map.endLng ?? -1])
+    const startLng = coord(r[map.startLng ?? -1])
+    const endLng = coord(r[map.endLng ?? -1])
     const start = parseTime(r[map.start ?? -1] ?? '', startLng)
     const end = parseTime(r[map.end ?? -1] ?? '', endLng ?? startLng)
     const dist = num(r[map.distance ?? -1])
@@ -251,8 +261,8 @@ export function rowsToTrips(rows: string[][], map: ColumnMap, units: Units = DEF
     const hours = (end - start) / 3600e3
     const idleH = Math.min(idleMin / 60, hours * 0.95)
     const load = num(r[map.load ?? -1])
-    const startLat = num(r[map.startLat ?? -1])
-    const endLat = num(r[map.endLat ?? -1])
+    const startLat = coord(r[map.startLat ?? -1])
+    const endLat = coord(r[map.endLat ?? -1])
     trips.push({
       vehicle: r[map.vehicle ?? -1]?.trim() || fallbackVehicle,
       start,

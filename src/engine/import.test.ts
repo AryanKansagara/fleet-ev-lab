@@ -1,0 +1,149 @@
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { test } from 'node:test'
+import { CATALOGUE } from './catalogue.ts'
+import { tripKwh } from './energy.ts'
+import { guessHeaderless, guessMapping, parseCsv, parseDurationMin, parseGeotabJson, parseGpx, rowsToPoints, rowsToTrips } from './parse.ts'
+import { nearestFuelCity, parseBoc, parseStatcan } from './prices.ts'
+import { assembleFleet, fleetFromPoints } from './segment.ts'
+import { defaultSettings } from './settings.ts'
+
+const fx = (name: string) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8')
+const near = (a: number, b: number, eps = 1e-6) => assert.ok(Math.abs(a - b) < eps, `${a} != ${b}`)
+
+test('real Garmin eTrex GPX: date-named track falls back to the file name and yields one short car trip', () => {
+  const pts = parseGpx(fx('etrex-car.gpx'), 'Van 3')
+  assert.equal(pts.length, 104)
+  assert.ok(pts.every((p) => p.vehicle === 'Van 3'))
+  const fleet = fleetFromPoints(pts, { name: 'etrex', defaultCls: 'car', defaultLoadKg: 0 })
+  assert.equal(fleet.trips.length, 1)
+  assert.ok(fleet.trips[0].km > 2.4 && fleet.trips[0].km < 2.8, String(fleet.trips[0].km))
+})
+
+test('GPX track names: a real name is kept, a segment point name is not mistaken for it', () => {
+  const gpx = '<gpx><trk><name>Truck 12</name><trkseg><trkpt lat="43.7" lon="-79.4"><time>2026-01-05T13:00:00Z</time><name>stop</name></trkpt></trkseg></trk>' +
+    '<trk><trkseg><trkpt lat="43.7" lon="-79.4"><name>pt 1</name><time>2026-01-05T13:00:00Z</time></trkpt></trkseg></trk></gpx>'
+  assert.deepEqual(parseGpx(gpx, 'file').map((p) => p.vehicle), ['Truck 12', 'file'])
+})
+
+test('GPSLogger CSV with semicolons and decimal commas reads coordinates and m/s speed', () => {
+  const rows = parseCsv(fx('gpslogger-eu.csv'))
+  const { kind, map, units } = guessMapping(rows[0])
+  assert.equal(kind, 'points')
+  assert.equal(rows[0][map.lng!], 'lon')
+  const { points, bad } = rowsToPoints(rows.slice(1), map, { ...units, speed: 'mps' }, 'Phone')
+  assert.equal(bad, 0)
+  near(points[0].lat, 43.6581)
+  near(points[0].lng, -79.405)
+  near(points[0].speedKph!, 37.8)
+  assert.equal(points[0].vehicle, 'Phone')
+})
+
+test('header units are detected: mph, m/s, miles, lb, ticks and seconds', () => {
+  assert.deepEqual(guessMapping(['vehicle', 'timestamp', 'lat', 'lng', 'Speed (mph)', 'Load lb']).units, { distance: 'km', speed: 'mph', load: 'lb', idle: 'min' })
+  assert.equal(guessMapping(['time', 'lat', 'lon', 'speed m/s']).units.speed, 'mps')
+  assert.equal(guessMapping(['vehicle', 'start', 'end', 'Distance (mi)', 'idle seconds']).units.distance, 'mi')
+  assert.equal(guessMapping(['vehicle', 'start', 'end', 'distance', 'idle seconds']).units.idle, 's')
+})
+
+test('MyGeotab API Adapter LogRecords2 CSV uses DeviceId as the vehicle, not the row id', () => {
+  const rows = parseCsv(fx('adapter-logrecords2.csv'))
+  const { kind, map } = guessMapping(rows[0])
+  assert.equal(kind, 'points')
+  assert.equal(rows[0][map.vehicle!], 'DeviceId')
+  const { points } = rowsToPoints(rows.slice(1), map)
+  assert.deepEqual([...new Set(points.map((p) => p.vehicle))], ['27', '31'])
+})
+
+test('MyGeotab API Adapter Trips2 CSV: ticks for idling and StopPoint X/Y as the end coordinate', () => {
+  const rows = parseCsv(fx('adapter-trips2.csv'))
+  const { kind, map, units } = guessMapping(rows[0])
+  assert.equal(kind, 'trips')
+  assert.equal(units.idle, 'ticks')
+  const { trips } = rowsToTrips(rows.slice(1), map, units)
+  assert.equal(trips[0].vehicle, '27')
+  near(trips[0].km, 18.4)
+  near(trips[0].idleH, 192 / 3600)
+  assert.deepEqual(trips[0].to, [43.6561, -79.4102])
+})
+
+test('headerless T-Drive layout: longitude is the coordinate outside 90 degrees', () => {
+  const rows = parseCsv(fx('tdrive-headerless.csv'))
+  const map = guessHeaderless(rows[0])!
+  assert.deepEqual(map, { timestamp: 1, lng: 2, lat: 3, vehicle: 0 })
+  assert.equal(guessHeaderless(['vehicle', 'timestamp', 'lat', 'lng']), null)
+  const { points } = rowsToPoints(rows, map)
+  near(points[0].lat, 39.92123)
+  assert.equal(points[0].vehicle, '1')
+})
+
+test('durations: hh:mm:ss spans, day spans, .NET ticks, seconds and minutes', () => {
+  near(parseDurationMin('00:03:12')!, 3.2)
+  near(parseDurationMin('00:29:21.0040000')!, 29 + 21.004 / 60)
+  near(parseDurationMin('1.02:00:00')!, 26 * 60)
+  near(parseDurationMin('1920000000', 'ticks')!, 3.2)
+  near(parseDurationMin('90', 's')!, 1.5)
+  assert.equal(parseDurationMin('12'), 12)
+  assert.equal(parseDurationMin(''), undefined)
+})
+
+test('number cells: decimal comma, European thousands and a quoted thousands comma', () => {
+  const t = guessMapping(['vehicle', 'start', 'end', 'distance'])
+  const km = (d: string) => rowsToTrips([['A', '2026-01-05 08:00', '2026-01-05 10:00', d]], t.map).trips[0].km
+  near(km('12,5'), 12.5)
+  near(km('1.234,5'), 1234.5)
+  near(km('1,234'), 1234)
+  near(km('48.25'), 48.25)
+})
+
+test('MyGeotab Trip JSON-RPC result: km, idling span capped at trip length, start chained from previous stop', () => {
+  const geo = parseGeotabJson(fx('geotab-trips.json'))
+  assert.ok(geo && 'trips' in geo)
+  const [a, b, c] = geo.trips
+  assert.equal(a.vehicle, 'b2A')
+  near(a.km, 18.4)
+  near(a.idleH, 3.2 / 60)
+  assert.equal(a.from, undefined)
+  assert.deepEqual(b.from, a.to)
+  // A one-day idling span on a 45-minute trip is clamped.
+  assert.ok(c.idleH < 0.75)
+  // Longitude -79.4 rounds to UTC-5: 12:02 Z is 07:02 local.
+  assert.equal(new Date(a.start).getUTCHours(), 7)
+  const fleet = assembleFleet(geo.trips, { name: 'geotab' })
+  assert.deepEqual(fleet.vehicles.map((v) => v.id), ['b2A', 'b2B'])
+  // Multicall shape (array of arrays) and non-Geotab JSON.
+  assert.ok(parseGeotabJson(JSON.stringify([[JSON.parse(fx('geotab-trips.json')).result[0]]])))
+  assert.equal(parseGeotabJson('{"foo": 1}'), null)
+  assert.equal(parseGeotabJson('not json'), null)
+})
+
+test('MyGeotab LogRecord JSON segments into one trip after a 30-minute stop', () => {
+  const geo = parseGeotabJson(fx('geotab-logrecords.json'))
+  assert.ok(geo && 'points' in geo)
+  assert.equal(geo.points.length, 8)
+  const fleet = fleetFromPoints(geo.points, { name: 'lr', defaultCls: 'van', defaultLoadKg: 300 })
+  assert.equal(fleet.trips.length, 1)
+  assert.ok(fleet.trips[0].km > 2.5 && fleet.trips[0].km < 3.5)
+})
+
+test('official price feeds: Bank of Canada and StatCan response shapes, nearest city', () => {
+  assert.deepEqual(parseBoc({ observations: [{ d: '2026-11-13', FXUSDCAD: { v: '1.4257' } }] }), { rate: 1.4257, date: '2026-11-13' })
+  assert.equal(parseBoc({ observations: [] }), null)
+  // Shape captured from getDataFromCubePidCoordAndLatestNPeriods on 2026-11-15; trailing null months are skipped.
+  const wds = { status: 'SUCCESS', object: { vectorDataPoint: [{ refPer: '2026-08-01', value: 170.3 }, { refPer: '2026-09-01', value: 183.7 }, { refPer: '2026-10-01', value: null }] } }
+  assert.deepEqual(parseStatcan(wds), { perL: 1.837, month: '2026-09' })
+  assert.equal(parseStatcan({ status: 'FAILED', object: {} }), null)
+  assert.equal(nearestFuelCity(51.0, -114.1)?.name, 'Calgary')
+  assert.equal(nearestFuelCity(41.88, -87.63), null)
+})
+
+test('trip energy by hand: 50 km at 50 km/h, 21 C, no load equals usable/rated x 47.5 / 1.15', () => {
+  const s = defaultSettings()
+  const m = CATALOGUE[0]
+  const trip = { start: 0, end: 3600e3, km: 50, idleH: 0, speedKm: [0, 50, 0, 0] as [number, number, number, number] }
+  near(tripKwh(trip, m, 21, 0, s), ((m.usableKwh / m.ratedKm) * 47.5) / 1.15, 1e-9)
+  // 1000 kg adds 12%, and a 30-minute idle at -25 C adds 0.5 h x 5 kW of cabin heat.
+  const cold = tripKwh({ ...trip, end: 5400e3, idleH: 0.5 }, m, -25, 1000, s)
+  const r = s.curve[1].r
+  near(cold, ((m.usableKwh / m.ratedKm) * 47.5 * 1.12) / r + 2.5, 1e-9)
+})
