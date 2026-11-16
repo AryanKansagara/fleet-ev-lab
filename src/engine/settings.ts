@@ -84,8 +84,9 @@ export function defaultSettings(): Settings {
     tco: {
       years: 8,
       currency: 'C$',
-      fxUsd: 1.3966,
-      fuelPrice: 1.45,
+      // Bank of Canada USD/CAD for 2026-11-13, and StatCan 18-10-0001-01 Toronto regular self-serve for September 2026.
+      fxUsd: 1.4257,
+      fuelPrice: 1.837,
       electricity: 0.16,
       demandChargeKwMonth: 10,
       maintEvKm: 0.06,

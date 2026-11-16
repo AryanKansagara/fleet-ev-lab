@@ -5,6 +5,7 @@ import Landing from './Landing.tsx'
 import { usePath } from './ui.tsx'
 
 const Tool = lazy(() => import('./Tool.tsx'))
+const Docs = lazy(() => import('./Docs.tsx'))
 
 function App() {
   const path = usePath()
@@ -12,6 +13,13 @@ function App() {
     return (
       <Suspense fallback={<div className="page-loading" role="status">Loading the lab</div>}>
         <Tool />
+      </Suspense>
+    )
+  }
+  if (path === '/docs' || path.startsWith('/docs/')) {
+    return (
+      <Suspense fallback={<div className="page-loading" role="status">Loading</div>}>
+        <Docs />
       </Suspense>
     )
   }

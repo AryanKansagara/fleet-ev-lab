@@ -1,5 +1,5 @@
 import { useRef, useState, type DragEvent } from 'react'
-import { DEFAULT_UNITS, guessMapping, parseCsv, parseGpx, POINT_FIELDS, rowsToPoints, rowsToTrips, TRIP_FIELDS, type ColumnMap, type Field, type Units } from './engine/parse.ts'
+import { DEFAULT_UNITS, guessHeaderless, guessMapping, parseCsv, parseGeotabJson, parseGpx, POINT_FIELDS, rowsToPoints, rowsToTrips, TRIP_FIELDS, type ColumnMap, type Field, type Units } from './engine/parse.ts'
 import { assembleFleet, DEFAULT_SEGMENT, fleetFromPoints } from './engine/segment.ts'
 import type { Fleet, GpsPoint, VClass } from './engine/types.ts'
 import { NumField } from './ui.tsx'
@@ -41,9 +41,23 @@ export default function Import({ onFleet }: { onFleet: (f: Fleet) => void }) {
       setGpx({ name, points })
       return
     }
+    if (/^\s*[[{]/.test(text)) {
+      const geo = parseGeotabJson(text, name.replace(/\.[^.]+$/, ''))
+      if (!geo) return setError('That JSON is not a list of MyGeotab LogRecord or Trip objects.')
+      if ('trips' in geo) return finish(assembleFleet(geo.trips, { name, defaultCls: cls, defaultLoadKg: loadKg }))
+      if (!geo.points.length) return setError('Those LogRecords have no usable coordinates.')
+      setGpx({ name, points: geo.points })
+      return
+    }
     const rows = parseCsv(text)
+    const headless = rows[0] ? guessHeaderless(rows[0]) : null
+    if (headless) {
+      setUnits(DEFAULT_UNITS)
+      return setPending({ name, header: rows[0].map((_, i) => `Column ${i + 1}`), rows, kind: 'points', map: headless })
+    }
     if (rows.length < 2) return setError('That file has no data rows. It needs a header line and at least one row.')
-    const { kind, map } = guessMapping(rows[0])
+    const { kind, map, units: hinted } = guessMapping(rows[0])
+    setUnits(hinted)
     setPending({ name, header: rows[0], rows: rows.slice(1), kind, map })
   }
 
@@ -107,9 +121,9 @@ export default function Import({ onFleet }: { onFleet: (f: Fleet) => void }) {
         onDrop={onDrop}
       >
         <h3>Drop GPS trips here</h3>
-        <p>GPX, CSV of GPS points (vehicle, timestamp, lat, lng, optional speed, odometer, load), or a trip-summary CSV. Files are read in this browser and never uploaded.</p>
+        <p>GPX, CSV of GPS points (vehicle, timestamp, lat, lng, optional speed, odometer, load), a trip-summary CSV, or MyGeotab API LogRecord or Trip results saved as JSON. <a href="/docs#formats">Formats</a>. Files are read in this browser and never uploaded.</p>
         <button className="btn btn-primary" onClick={() => input.current?.click()}>Choose files</button>
-        <input ref={input} type="file" hidden multiple accept=".csv,.tsv,.txt,.gpx,text/csv" onChange={(e) => { if (e.target.files) readFiles(e.target.files); e.target.value = '' }} />
+        <input ref={input} type="file" hidden multiple accept=".csv,.tsv,.txt,.gpx,.json,text/csv,application/json" onChange={(e) => { if (e.target.files) readFiles(e.target.files); e.target.value = '' }} />
         <details className="paste">
           <summary>Or paste CSV</summary>
           <textarea value={paste} onChange={(e) => setPaste(e.target.value)} rows={5} aria-label="Paste CSV" placeholder="vehicle,timestamp,lat,lng,speed_kph" spellCheck={false} />
@@ -156,8 +170,9 @@ export default function Import({ onFleet }: { onFleet: (f: Fleet) => void }) {
             <label className="field"><span>Vehicle class</span><select value={cls} onChange={(e) => setCls(e.target.value as VClass)}><option value="van">Van</option><option value="pickup">Pickup</option><option value="car">Car</option></select><small>Editable per vehicle later</small></label>
             <NumField label="Default load" unit="kg" value={loadKg} min={0} onChange={setLoadKg} hint="Used where a row has no load" />
             <label className="field"><span>Distance unit</span><select value={units.distance} onChange={(e) => setUnits({ ...units, distance: e.target.value as Units['distance'] })}><option value="km">km</option><option value="mi">miles</option></select></label>
-            <label className="field"><span>Speed unit</span><select value={units.speed} onChange={(e) => setUnits({ ...units, speed: e.target.value as Units['speed'] })}><option value="kph">km/h</option><option value="mph">mph</option></select></label>
+            <label className="field"><span>Speed unit</span><select value={units.speed} onChange={(e) => setUnits({ ...units, speed: e.target.value as Units['speed'] })}><option value="kph">km/h</option><option value="mph">mph</option><option value="mps">m/s</option></select></label>
             <label className="field"><span>Load unit</span><select value={units.load} onChange={(e) => setUnits({ ...units, load: e.target.value as Units['load'] })}><option value="kg">kg</option><option value="lb">lb</option></select></label>
+            {pending?.kind === 'trips' ? <label className="field"><span>Idle unit</span><select value={units.idle ?? 'min'} onChange={(e) => setUnits({ ...units, idle: e.target.value as NonNullable<Units['idle']> })}><option value="min">minutes</option><option value="s">seconds</option><option value="ticks">.NET ticks</option></select><small>hh:mm:ss is read automatically</small></label> : null}
           </div>
           <button className="btn btn-primary" onClick={build}>Analyse this fleet</button>
         </div>

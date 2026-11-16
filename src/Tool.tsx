@@ -3,6 +3,7 @@ import Assumptions from './Assumptions.tsx'
 import { ChargingGantt, SuitabilityGrid, TcoChart } from './Charts.tsx'
 import { dateOf, failuresCsv, resultsCsv } from './engine/export.ts'
 import { CATALOGUE_AS_OF, INCENTIVE_NOTES } from './engine/catalogue.ts'
+import { fetchLivePrices, STATCAN_TABLE, type LivePrices } from './engine/prices.ts'
 import { loadSample, samplePointsCsv, SAMPLES, type SampleId } from './engine/samples.ts'
 import { allModels, CLIMATES, candidateModels, defaultSettings, nearestClimate } from './engine/settings.ts'
 import { decodeSettings, encodeSettings, mergeSettings } from './engine/share.ts'
@@ -294,7 +295,7 @@ export default function Tool() {
               ) : tab === 'Charging' ? (
                 <Charging result={result} settings={settings} onChange={setSettings} />
               ) : tab === 'Costs' ? (
-                <Costs result={result} settings={settings} onChange={setSettings} />
+                <Costs result={result} settings={settings} onChange={setSettings} at={fleet.depots.find((x) => x.lat || x.lng)} />
               ) : tab === 'Rollout' ? (
                 <Rollout fleet={fleet} settings={settings} temp={deferredTemp} result={result} />
               ) : tab === 'Assumptions' ? (
@@ -551,8 +552,20 @@ function Charging({ result, settings, onChange }: { result: ReturnType<typeof an
 
 /* ---------- Costs ---------- */
 
-function Costs({ result, settings, onChange }: { result: ReturnType<typeof analyzeFleet>; settings: Settings; onChange: (s: Settings) => void }) {
+function Costs({ result, settings, onChange, at }: { result: ReturnType<typeof analyzeFleet>; settings: Settings; onChange: (s: Settings) => void; at?: { lat: number; lng: number } }) {
   const [pick, setPick] = useState('fleet')
+  const [live, setLive] = useState<LivePrices | 'loading' | 'failed' | null>(null)
+  const getLive = async () => {
+    setLive('loading')
+    const p = await fetchLivePrices(at?.lat ?? 43.65, at?.lng ?? -79.38)
+    if (!p.fx && !p.gasoline) return setLive('failed')
+    setLive(p)
+    // Both are Canadian-dollar figures, so they only apply when costs are in C$.
+    const patch: Partial<Settings['tco']> = {}
+    if (p.fx && settings.tco.currency === 'C$') patch.fxUsd = p.fx.rate
+    if (p.gasoline && settings.tco.currency === 'C$') patch.fuelPrice = p.gasoline.perL
+    onChange({ ...settings, tco: { ...settings.tco, ...patch } })
+  }
   const t = settings.tco
   const setT = (p: Partial<Settings['tco']>) => onChange({ ...settings, tco: { ...t, ...p } })
   const cur = t.currency
@@ -606,7 +619,19 @@ function Costs({ result, settings, onChange }: { result: ReturnType<typeof analy
       </section>
       <section className="card">
         <h3>Prices and rates</h3>
-        <p className="muted small">Defaults are rough assumptions for Ontario in late 2026, not quotes. Replace them with yours.</p>
+        <p className="muted small">Defaults are Ontario figures from late 2026, not quotes. Replace them with yours, or pull the latest official pump price and exchange rate.</p>
+        <div className="live-prices">
+          <button className="btn btn-outline" onClick={getLive} disabled={live === 'loading'}>{live === 'loading' ? 'Fetching' : 'Use latest official prices'}</button>
+          {live === 'failed' ? <p className="error small" role="alert">Could not reach Statistics Canada or the Bank of Canada. Defaults are unchanged.</p> : null}
+          {live && typeof live === 'object' ? (
+            <p className="muted small" role="status">
+              {live.gasoline ? <>Regular gasoline, {live.city}, {live.gasoline.month}: {cur}{live.gasoline.perL.toFixed(3)}/L. </> : <>No Statistics Canada city within 400 km of this depot, so fuel is unchanged. </>}
+              {live.diesel ? <>Diesel: {cur}{live.diesel.perL.toFixed(3)}/L <button className="link-btn" onClick={() => setT({ fuelPrice: live.diesel!.perL })}>use diesel</button>. </> : null}
+              {live.fx ? <>USD/CAD {live.fx.rate} on {live.fx.date}. </> : null}
+              <a href={STATCAN_TABLE} rel="noreferrer">StatCan 18-10-0001-01</a>, <a href="https://www.bankofcanada.ca/rates/exchange/daily-exchange-rates/" rel="noreferrer">Bank of Canada</a>.
+            </p>
+          ) : null}
+        </div>
         <div className="fields">
           <NumField label={`Fuel, ${cur}`} unit="/L" step={0.01} value={t.fuelPrice} min={0} onChange={(v) => setT({ fuelPrice: v })} />
           <NumField label={`Electricity, ${cur}`} unit="/kWh" step={0.01} value={t.electricity} min={0} onChange={(v) => setT({ electricity: v })} />
@@ -616,7 +641,7 @@ function Costs({ result, settings, onChange }: { result: ReturnType<typeof analy
           <NumField label="Discount rate" unit="%" step={0.5} value={t.discountPct} min={0} max={30} onChange={(v) => setT({ discountPct: v })} />
           <NumField label="EV depreciation" unit="%/yr" value={t.evDepreciationPct} min={0} max={60} onChange={(v) => setT({ evDepreciationPct: v })} />
           <NumField label="Current depreciation" unit="%/yr" value={t.iceDepreciationPct} min={0} max={60} onChange={(v) => setT({ iceDepreciationPct: v })} />
-          <NumField label="USD to local rate" step={0.0001} value={t.fxUsd} min={0.01} onChange={(v) => setT({ fxUsd: v })} hint="1.3966 on 2026-11-05" />
+          <NumField label="USD to local rate" step={0.0001} value={t.fxUsd} min={0.01} onChange={(v) => setT({ fxUsd: v })} hint="Default 1.4257, Bank of Canada, 2026-11-13" />
           <NumField label={`AC charger installed, ${cur}`} value={t.chargerCapexAc} min={0} step={500} onChange={(v) => setT({ chargerCapexAc: v })} />
           <NumField label={`DC charger installed, ${cur}`} value={t.chargerCapexDc} min={0} step={1000} onChange={(v) => setT({ chargerCapexDc: v })} />
           <NumField label="Tailpipe CO2" unit="kg/L" step={0.01} value={t.fuelKgCo2PerL} min={0} onChange={(v) => setT({ fuelKgCo2PerL: v })} />

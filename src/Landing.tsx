@@ -237,7 +237,7 @@ export default function Landing() {
           <div>
             <h2 className="section-title left">Your GPS data stays in this browser</h2>
             <p>There is no server and no upload. Parsing, the simulation and exports all run on your machine, and share links carry settings only.</p>
-            <p>Two things do touch the network. Open-Meteo receives a depot location rounded to about 10 km plus a date range, to return temperatures. The map tile host sees which area you are viewing, as with any web map.</p>
+            <p>Two things do touch the network. Open-Meteo receives a depot location rounded to about 10 km plus a date range, to return temperatures. The map tile host sees which area you are viewing, as with any web map. If you ask for the latest official fuel price, Statistics Canada receives a city id, nothing else.</p>
           </div>
           <div className="card">
             <span className="eyebrow">An independent take</span>

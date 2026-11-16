@@ -86,7 +86,7 @@ export function Footer() {
     <footer className="footer">
       <div className="wrap footer-in">
         <p>Built by Aryan Kansagara. Independent project, not affiliated with Geotab.</p>
-        <p className="muted">Map data &copy; <a href="https://www.openstreetmap.org/copyright" rel="noreferrer">OpenStreetMap</a> contributors. Weather by <a href="https://open-meteo.com/" rel="noreferrer">Open-Meteo</a>.</p>
+        <p className="muted">Map data &copy; <a href="https://www.openstreetmap.org/copyright" rel="noreferrer">OpenStreetMap</a> contributors. Weather by <a href="https://open-meteo.com/" rel="noreferrer">Open-Meteo</a>. <Link href="/docs">Formats and data sources</Link>.</p>
       </div>
     </footer>
   )

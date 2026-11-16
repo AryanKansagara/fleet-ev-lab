@@ -1,4 +1,4 @@
-import type { GpsPoint, Trip, VClass } from './types.ts'
+import type { GpsPoint, LatLng, Trip, VClass } from './types.ts'
 
 export function parseCsv(text: string): string[][] {
   const clean = text.replace(/^﻿/, '')
@@ -45,28 +45,28 @@ export const POINT_FIELDS: Field[] = ['vehicle', 'timestamp', 'lat', 'lng', 'spe
 export const TRIP_FIELDS: Field[] = ['vehicle', 'start', 'end', 'distance', 'idle', 'load', 'startLat', 'startLng', 'endLat', 'endLng']
 
 const SYN: Record<Field, string[]> = {
-  vehicle: ['vehicle', 'vehicle id', 'vehicleid', 'device', 'device name', 'devicename', 'asset', 'unit', 'unit id', 'vin', 'truck', 'van', 'name', 'id'],
+  vehicle: ['vehicle', 'vehicle id', 'vehicleid', 'device', 'device name', 'devicename', 'device id', 'deviceid', 'asset', 'unit', 'unit id', 'vin', 'truck', 'van', 'name', 'id'],
   timestamp: ['timestamp', 'datetime', 'date time', 'date/time', 'time', 'gps time', 'gpstime', 'recorded at', 'date'],
   lat: ['lat', 'latitude', 'y', 'gps lat'],
   lng: ['lng', 'lon', 'long', 'longitude', 'x', 'gps lon', 'gps lng'],
-  speed: ['speed', 'speed kph', 'speed km/h', 'speed (km/h)', 'kph', 'kmh', 'speed mph', 'mph', 'velocity'],
+  speed: ['speed', 'speed kph', 'speed km/h', 'speed (km/h)', 'kph', 'kmh', 'speed mph', 'speed (mph)', 'mph', 'speed m/s', 'speed (m/s)', 'velocity'],
   odometer: ['odometer', 'odo', 'odometer km', 'odometer (km)', 'mileage'],
   load: ['load', 'load kg', 'payload', 'payload kg', 'cargo', 'cargo kg', 'weight'],
   start: ['start', 'start time', 'starttime', 'start date', 'trip start', 'departure', 'start datetime'],
   end: ['end', 'stop', 'end time', 'endtime', 'stop time', 'end date', 'trip end', 'arrival', 'end datetime'],
-  distance: ['distance', 'distance km', 'distance (km)', 'km', 'distance mi', 'miles', 'trip distance', 'driving distance'],
-  idle: ['idle', 'idle min', 'idle minutes', 'idling', 'idle time', 'idling duration', 'idle duration'],
+  distance: ['distance', 'distance km', 'distance (km)', 'km', 'distance mi', 'distance (mi)', 'distance miles', 'distance (miles)', 'miles', 'trip distance', 'driving distance'],
+  idle: ['idle', 'idle min', 'idle minutes', 'idling', 'idle time', 'idling duration', 'idlingduration', 'idle duration', 'idle seconds', 'idle sec', 'idle (s)', 'idling duration ticks', 'idlingdurationticks'],
   startLat: ['start lat', 'start latitude', 'startlat', 'from lat'],
   startLng: ['start lng', 'start lon', 'start longitude', 'startlng', 'startlon', 'from lng', 'from lon'],
-  endLat: ['end lat', 'end latitude', 'endlat', 'stop lat', 'stop latitude', 'to lat'],
-  endLng: ['end lng', 'end lon', 'end longitude', 'endlng', 'endlon', 'stop lng', 'stop lon', 'stop longitude', 'to lng', 'to lon'],
+  endLat: ['end lat', 'end latitude', 'endlat', 'stop lat', 'stop latitude', 'to lat', 'stop point y', 'stoppointy'],
+  endLng: ['end lng', 'end lon', 'end longitude', 'endlng', 'endlon', 'stop lng', 'stop lon', 'stop longitude', 'to lng', 'to lon', 'stop point x', 'stoppointx'],
 }
 
 const norm = (s: string) => s.toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim()
 
 export type ColumnMap = Partial<Record<Field, number>>
 
-export function guessMapping(header: string[]): { kind: 'points' | 'trips'; map: ColumnMap } {
+export function guessMapping(header: string[]): { kind: 'points' | 'trips'; map: ColumnMap; units: Units } {
   const cols = header.map(norm)
   const map: ColumnMap = {}
   const fields = Object.keys(SYN) as Field[]
@@ -81,7 +81,41 @@ export function guessMapping(header: string[]): { kind: 'points' | 'trips'; map:
     }
   }
   const kind = map.lat !== undefined && map.lng !== undefined && map.timestamp !== undefined ? 'points' : 'trips'
-  return { kind, map }
+  return { kind, map, units: unitsFromHeader(cols, map) }
+}
+
+/** Reads units off the mapped column names, e.g. "Speed (mph)", "Distance mi", "IdlingDurationTicks". */
+export function unitsFromHeader(cols: string[], map: ColumnMap): Units {
+  const h = (f: Field) => (map[f] === undefined ? '' : cols[map[f]!])
+  const speed = h('speed')
+  const idle = h('idle')
+  return {
+    distance: /\b(mi|miles?)\b/.test(h('distance')) ? 'mi' : 'km',
+    speed: /mph/.test(speed) ? 'mph' : /m\/s/.test(speed) ? 'mps' : 'kph',
+    load: /\b(lb|lbs)\b/.test(h('load')) ? 'lb' : 'kg',
+    idle: /ticks/.test(idle) ? 'ticks' : /\b(s|sec|secs|seconds)\b/.test(idle) ? 's' : 'min',
+  }
+}
+
+/**
+ * A file with no header row, such as the T-Drive taxi layout "id,datetime,lng,lat". Returns a mapping guessed
+ * from the values, or null when the first row looks like a header.
+ */
+export function guessHeaderless(row: string[]): ColumnMap | null {
+  if (row.some((c) => /[a-z]{4,}/i.test(c) && parseTime(c) === null)) return null
+  const map: ColumnMap = {}
+  const ts = row.findIndex((c) => !/^-?\d+(\.\d+)?$/.test(c.trim()) && parseTime(c) !== null)
+  if (ts < 0) return null
+  map.timestamp = ts
+  const dec = row.map((c, i) => (i !== ts && /^-?\d{1,3}\.\d{3,}$/.test(c.trim()) ? i : -1)).filter((i) => i >= 0)
+  if (dec.length < 2) return null
+  const [a, b] = dec
+  // Longitude is the one outside +-90; otherwise assume latitude comes first.
+  if (Math.abs(+row[a]) > 90) [map.lng, map.lat] = [a, b]
+  else [map.lat, map.lng] = [a, b]
+  const v = row.findIndex((_, i) => i < Math.min(ts, a))
+  if (v >= 0) map.vehicle = v
+  return map
 }
 
 const MONTHS = 'jan feb mar apr may jun jul aug sep oct nov dec'.split(' ')
@@ -133,22 +167,39 @@ function offsetMs(z: string): number {
 
 const num = (s: string | undefined) => {
   if (s === undefined || s.trim() === '') return undefined
-  const n = Number(s.trim().replace(/[^0-9.+-eE]/g, ''))
+  let t = s.trim()
+  // Decimal comma, as GPSLogger and European exports write it: "43,6532" or "1.234,5". A lone ",ddd" is a thousands separator.
+  if (/^[+-]?\d+,\d+$/.test(t) && !/^[+-]?\d{1,3},\d{3}$/.test(t)) t = t.replace(',', '.')
+  else if (/^[+-]?\d{1,3}(\.\d{3})+,\d+$/.test(t)) t = t.replace(/\./g, '').replace(',', '.')
+  const n = Number(t.replace(/[^0-9.eE+-]/g, ''))
   return Number.isFinite(n) ? n : undefined
+}
+
+/** Duration in minutes from a plain number in the given unit, or a "[d.]hh:mm[:ss[.fffffff]]" span as MyGeotab and .NET write it. */
+export function parseDurationMin(s: string | undefined, unit: Units['idle'] = 'min'): number | undefined {
+  const t = s?.trim()
+  if (!t) return undefined
+  const m = t.match(/^(?:(\d+)\.)?(\d{1,2}):(\d{2})(?::(\d{2}(?:\.\d+)?))?$/)
+  if (m) return +(m[1] ?? 0) * 1440 + +m[2] * 60 + +m[3] + +(m[4] ?? 0) / 60
+  const n = num(t)
+  if (n === undefined) return undefined
+  return unit === 's' ? n / 60 : unit === 'ticks' ? n / 6e8 : n
 }
 
 export interface Units {
   distance: 'km' | 'mi'
-  speed: 'kph' | 'mph'
+  speed: 'kph' | 'mph' | 'mps'
   load: 'kg' | 'lb'
+  idle?: 'min' | 's' | 'ticks'
 }
-export const DEFAULT_UNITS: Units = { distance: 'km', speed: 'kph', load: 'kg' }
+export const DEFAULT_UNITS: Units = { distance: 'km', speed: 'kph', load: 'kg', idle: 'min' }
+const SPEED_K: Record<Units['speed'], number> = { kph: 1, mph: 1.60934, mps: 3.6 }
 
 export function rowsToPoints(rows: string[][], map: ColumnMap, units: Units = DEFAULT_UNITS, fallbackVehicle = 'Vehicle 1'): { points: GpsPoint[]; bad: number } {
   const points: GpsPoint[] = []
   let bad = 0
   const dk = units.distance === 'mi' ? 1.60934 : 1
-  const sk = units.speed === 'mph' ? 1.60934 : 1
+  const sk = SPEED_K[units.speed] ?? 1
   const lk = units.load === 'lb' ? 0.453592 : 1
   for (const r of rows) {
     const lat = num(r[map.lat ?? -1])
@@ -196,7 +247,7 @@ export function rowsToTrips(rows: string[][], map: ColumnMap, units: Units = DEF
       continue
     }
     const km = dist * dk
-    const idleMin = num(r[map.idle ?? -1]) ?? 0
+    const idleMin = parseDurationMin(r[map.idle ?? -1], units.idle) ?? 0
     const hours = (end - start) / 3600e3
     const idleH = Math.min(idleMin / 60, hours * 0.95)
     const load = num(r[map.load ?? -1])
@@ -217,12 +268,16 @@ export function rowsToTrips(rows: string[][], map: ColumnMap, units: Units = DEF
   return { trips, bad }
 }
 
+const GENERIC_TRACK = /^(active log|current track|track|untitled|\d{4}-\d{2}-\d{2}[ T][\d:]+.*|.*\b(ride|run|walk|drive|activity)\b.*)$/i
+
 /** Minimal GPX reader for tracks and routes. Each track name becomes a vehicle unless one is provided. */
 export function parseGpx(xml: string, fallbackVehicle = 'Vehicle 1'): GpsPoint[] {
   const points: GpsPoint[] = []
   const tracks = xml.match(/<trk[\s>][\s\S]*?<\/trk>/g) ?? [xml]
   for (const trk of tracks) {
-    const name = trk.match(/<name>\s*(?:<!\[CDATA\[)?([^<\]]+)/)?.[1]?.trim() ?? fallbackVehicle
+    // Only the track's own name, before its first segment. Garmin and Strava name tracks by date or activity, which is not a vehicle.
+    const own = trk.split(/<trkseg[\s>]/)[0].match(/<name>\s*(?:<!\[CDATA\[)?([^<\]]+)/)?.[1]?.trim()
+    const name = own && !GENERIC_TRACK.test(own) && parseTime(own) === null ? own : fallbackVehicle
     for (const m of trk.matchAll(/<(?:trkpt|rtept|wpt)\b([^>]*?)(?:\/>|>([\s\S]*?)<\/(?:trkpt|rtept|wpt)>)/g)) {
       const lat = Number(m[1].match(/lat=["']([^"']+)/)?.[1])
       const lng = Number(m[1].match(/lon=["']([^"']+)/)?.[1])
@@ -241,4 +296,62 @@ export const guessClass = (id: string): VClass => {
   if (/pickup|truck|f-?150|silverado|ram 1500/.test(s)) return 'pickup'
   if (/car|sedan|suv|model y|civic|corolla/.test(s)) return 'car'
   return 'van'
+}
+
+type GeoItem = Record<string, unknown> & { device?: { id?: string; name?: string } | string }
+const deviceName = (o: GeoItem, fallback: string) => (typeof o.device === 'string' ? o.device : o.device?.name ?? o.device?.id) ?? fallback
+
+/**
+ * MyGeotab API results saved as JSON: an array, or a JSON-RPC body {"result": [...]}, of LogRecord
+ * (dateTime, latitude, longitude, speed in km/h) or Trip (start, stop, distance in km, idlingDuration as a
+ * "hh:mm:ss" span, stopPoint {x: lng, y: lat}). Device ids stand in for names unless a name is included.
+ * Returns null when the JSON is neither.
+ */
+export function parseGeotabJson(text: string, fallbackVehicle = 'Vehicle 1'): { points: GpsPoint[] } | { trips: Trip[] } | null {
+  let data: unknown
+  try {
+    data = JSON.parse(text)
+  } catch {
+    return null
+  }
+  if (data && !Array.isArray(data) && typeof data === 'object') data = (data as { result?: unknown }).result
+  if (!Array.isArray(data)) return null
+  // Multicall results are an array of arrays.
+  const items = (data.every(Array.isArray) ? data.flat() : data).filter((o): o is GeoItem => !!o && typeof o === 'object')
+  if (!items.length) return null
+  if ('latitude' in items[0] && 'dateTime' in items[0]) {
+    const points: GpsPoint[] = []
+    for (const o of items) {
+      const lat = Number(o.latitude)
+      const lng = Number(o.longitude)
+      const t = parseTime(String(o.dateTime ?? ''), lng)
+      if (!Number.isFinite(lat) || !Number.isFinite(lng) || t === null) continue
+      const speed = Number(o.speed)
+      points.push({ vehicle: deviceName(o, fallbackVehicle), t, lat, lng, speedKph: Number.isFinite(speed) && speed >= 0 ? speed : undefined })
+    }
+    return { points }
+  }
+  if ('start' in items[0] && 'stop' in items[0] && 'distance' in items[0]) {
+    const trips: Trip[] = []
+    for (const o of items) {
+      const sp = o.stopPoint as { x?: number; y?: number } | undefined
+      const to: LatLng | undefined = sp && Number.isFinite(sp.x) && Number.isFinite(sp.y) ? [sp.y!, sp.x!] : undefined
+      const start = parseTime(String(o.start ?? ''), to?.[1])
+      const end = parseTime(String(o.stop ?? ''), to?.[1])
+      const km = Number(o.distance)
+      if (start === null || end === null || end <= start || !Number.isFinite(km) || km < 0) continue
+      const hours = (end - start) / 3600e3
+      const idleH = Math.min((parseDurationMin(typeof o.idlingDuration === 'string' ? o.idlingDuration : undefined) ?? 0) / 60, hours * 0.95)
+      trips.push({ vehicle: deviceName(o, fallbackVehicle), start, end, km, idleH, speedKm: bandKm(km, km / Math.max(hours - idleH, 0.01)), to })
+    }
+    // A Geotab trip only carries where it stopped; it started where the previous one stopped.
+    trips.sort((a, b) => a.start - b.start)
+    const last = new Map<string, LatLng | undefined>()
+    for (const t of trips) {
+      t.from = last.get(t.vehicle)
+      last.set(t.vehicle, t.to)
+    }
+    return { trips }
+  }
+  return null
 }
