@@ -8,7 +8,7 @@ Upload GPS trips and see which vehicles could go electric, on which EV models, w
 
 Geotab's analysis of 5.2 million trips found observed range peaking near 115% of rated at 21°C and falling to about 54% at -15°C. A spec-sheet range says little about whether a specific van finishes its real route in a cold snap, after a shared charger left it short, with 900 kg in the back. Operators name the order themselves: charging first, then payload, then daily mileage.
 
-Geotab sells an EV suitability assessment. This is an independent, open take on the same question, not a replacement. It is not affiliated with Geotab, and it does not reproduce Geotab's curves: it fits its own labelled curve to the two published points, and every knot is editable.
+Range is modelled with its own curve fitted to those two published points, and every knot is editable.
 
 ## Features
 

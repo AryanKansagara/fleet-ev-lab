@@ -61,7 +61,7 @@ export function Header({ children }: { children?: ReactNode }) {
     <>
       <div className="utility">
         <div className="wrap utility-in">
-          <span>Independent project. All sample data is synthetic. Your GPS data stays in this browser.</span>
+          <span>All sample data is synthetic. Your GPS data stays in this browser.</span>
         </div>
       </div>
       <header className="nav">
@@ -85,7 +85,7 @@ export function Footer() {
   return (
     <footer className="footer">
       <div className="wrap footer-in">
-        <p>Built by Aryan Kansagara. Independent project, not affiliated with Geotab.</p>
+        <p>Built by Aryan Kansagara.</p>
         <p className="muted">Map data &copy; <a href="https://www.openstreetmap.org/copyright" rel="noreferrer">OpenStreetMap</a> contributors. Weather by <a href="https://open-meteo.com/" rel="noreferrer">Open-Meteo</a>. <Link href="/docs">Formats and data sources</Link>.</p>
       </div>
     </footer>

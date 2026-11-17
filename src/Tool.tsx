@@ -751,7 +751,7 @@ function Report({ fleet, settings, temp, result, tempLabel, reasons }: { fleet: 
         <p key={p.name}><strong>{p.name}:</strong> {p.vehicles.map((v) => v.id).join(', ') || 'none'}{p.vehicles.length && p.name !== 'Hold' ? `. ${p.chargers} chargers and ${p.peakKw.toFixed(0)} kW by end of phase.` : '.'}</p>
       ))}
       <h2>Assumptions</h2>
-      <p>Range curve: an independent fit through Geotab's published 115% at 21°C and 54% at {'−'}15°C, not Geotab's curve. Fuel {cur}{settings.tco.fuelPrice}/L, electricity {cur}{settings.tco.electricity}/kWh, charger {settings.charging.chargerKw} kW, {settings.charging.bufferPct}% buffer. EV specs checked {CATALOGUE_AS_OF}. Estimates, not quotes. Independent project, not affiliated with Geotab.</p>
+      <p>Range curve: an independent fit through Geotab's published 115% at 21°C and 54% at {'−'}15°C, not Geotab's curve. Fuel {cur}{settings.tco.fuelPrice}/L, electricity {cur}{settings.tco.electricity}/kWh, charger {settings.charging.chargerKw} kW, {settings.charging.bufferPct}% buffer. EV specs checked {CATALOGUE_AS_OF}. Estimates, not quotes.</p>
     </article>
   )
 }
