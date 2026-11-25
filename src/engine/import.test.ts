@@ -147,3 +147,41 @@ test('trip energy by hand: 50 km at 50 km/h, 21 C, no load equals usable/rated x
   const r = s.curve[1].r
   near(cold, ((m.usableKwh / m.ratedKm) * 47.5 * 1.12) / r + 2.5, 1e-9)
 })
+
+test('one clock per vehicle: crossing a 15-degree line keeps length, duration and order in every importer', () => {
+  const utc = (i: number) => new Date(Date.UTC(2026, 0, 5, 13, i)).toISOString()
+  const fixes = Array.from({ length: 61 }, (_, i) => ({ t: utc(i), lat: 43, lng: +(-81.9 - i * 0.02).toFixed(4) }))
+  const csv = ['vehicle,timestamp,lat,lng', ...fixes.map((f) => `A,${f.t},${f.lat},${f.lng}`)].join('\n')
+  const rows = parseCsv(csv)
+  const gpx = `<gpx><trk><name>A</name><trkseg>${fixes.map((f) => `<trkpt lat="${f.lat}" lon="${f.lng}"><time>${f.t}</time></trkpt>`).join('')}</trkseg></trk></gpx>`
+  const json = parseGeotabJson(JSON.stringify(fixes.map((f) => ({ device: { id: 'A' }, dateTime: f.t, latitude: f.lat, longitude: f.lng, speed: 98 }))))
+  assert.ok(json && 'points' in json)
+  for (const points of [rowsToPoints(rows.slice(1), guessMapping(rows[0]).map).points, parseGpx(gpx), json.points]) {
+    const [t, ...rest] = fleetFromPoints(points, { name: 'x' }).trips
+    assert.equal(rest.length, 0)
+    // 6371 x cos(43) x pi/180 x 1.2 degrees
+    near(t.km, 97.587, 0.01)
+    assert.equal(t.end - t.start, 3600e3)
+  }
+})
+
+test('trips: both ends use the vehicle clock, with one, both or no coordinates, and vehicles keep their own zone', () => {
+  const read = (text: string) => {
+    const rows = parseCsv(text)
+    const g = guessMapping(rows[0])
+    return rowsToTrips(rows.slice(1), g.map, g.units)
+  }
+  const cross = read('vehicle,start,end,distance,start lat,start lng,end lat,end lng\nA,2026-01-05T13:00:00Z,2026-01-05T13:40:00Z,60,43,-82,43,-83\nA,2026-01-05T15:00:00Z,2026-01-05T15:40:00Z,60,43,-83,43,-82\nV,2026-01-05T17:00:00Z,2026-01-05T18:00:00Z,20,49.2,-123.1,49.2,-123.1')
+  assert.equal(cross.bad, 0)
+  assert.deepEqual(cross.trips.map((t) => (t.end - t.start) / 60e3), [40, 40, 60])
+  assert.equal(new Date(cross.trips[2].start).getUTCHours(), 9)
+  const stopOnly = read('DeviceId,Start,Stop,Distance,StopPointX,StopPointY\n27,2026-01-14T12:02:11Z,2026-01-14T12:31:32Z,18.4,-79.4102,43.6561')
+  assert.equal(stopOnly.bad, 0)
+  assert.equal(new Date(stopOnly.trips[0].start).getUTCHours(), 7)
+  const geo = parseGeotabJson(JSON.stringify([-82.4, -82.6].map((x, i) => ({ device: { id: 'A' }, start: `2026-01-05T1${3 + i}:00:00Z`, stop: `2026-01-05T1${3 + i}:50:00Z`, distance: 30, stopPoint: { x, y: 43 } }))))
+  assert.ok(geo && 'trips' in geo)
+  assert.equal(geo.trips[1].start - geo.trips[0].start, 3600e3)
+  // A bad first fix does not set the zone.
+  const rows = parseCsv('vehicle,timestamp,lat,lng\nA,2026-01-05T13:00:00Z,0,0\nA,2026-01-05T13:01:00Z,43,-79\nA,2026-01-05T13:02:00Z,43,-79')
+  assert.equal(new Date(rowsToPoints(rows.slice(1), guessMapping(rows[0]).map).points[1].t).getUTCHours(), 8)
+})
