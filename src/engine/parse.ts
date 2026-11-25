@@ -133,6 +133,14 @@ export function guessHeaderless(row: string[]): ColumnMap | null {
   return map
 }
 
+/** Date.UTC that returns null for dates and times that do not exist, instead of rolling them over. */
+function utc(y: number, mo: number, d: number, h = 0, mi = 0, se = 0): number | null {
+  if (y < 1970 || mi > 59 || se > 60 || h > 24 || (h === 24 && (mi || se))) return null
+  const day = new Date(Date.UTC(y, mo - 1, d))
+  if (day.getUTCFullYear() !== y || day.getUTCMonth() !== mo - 1 || day.getUTCDate() !== d) return null
+  return Date.UTC(y, mo - 1, d, h, mi, se)
+}
+
 const MONTHS = 'jan feb mar apr may jun jul aug sep oct nov dec'.split(' ')
 
 /**
@@ -140,7 +148,7 @@ const MONTHS = 'jan feb mar apr may jun jul aug sep oct nov dec'.split(' ')
  * or Z are shifted by the longitude-derived zone.
  * Longitude approximates the zone and ignores DST. Good enough to find "overnight"; use a tz database if hour-level precision matters.
  */
-export function parseTime(raw: string, lng?: number): number | null {
+export function parseTime(raw: string, lng?: number, dayFirst?: boolean): number | null {
   const s = raw.trim()
   if (!s) return null
   if (/^\d{9,13}(\.\d+)?$/.test(s)) {
@@ -150,28 +158,43 @@ export function parseTime(raw: string, lng?: number): number | null {
   }
   let m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T ](\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?)?\s*(Z|[+-]\d{2}(?::?\d{2})?)?$/i)
   if (m) {
-    const wall = Date.UTC(+m[1], +m[2] - 1, +m[3], +(m[4] ?? 0), +(m[5] ?? 0), +(m[6] ?? 0))
+    const wall = utc(+m[1], +m[2], +m[3], +(m[4] ?? 0), +(m[5] ?? 0), +(m[6] ?? 0))
+    if (wall === null) return null
     if (!m[7]) return wall
     const abs = m[7].toUpperCase() === 'Z' ? wall : wall - offsetMs(m[7])
     return abs + (lng === undefined ? (m[7].toUpperCase() === 'Z' ? 0 : offsetMs(m[7])) : Math.round(lng / 15) * 3600e3)
   }
-  // North American month-first, as most telematics CSV exports write it. 13-31 in the first slot means day-first.
+  // North American month-first, as most telematics CSV exports write it, unless the file is day-first. A lone value with 13-31 in front is too.
   m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:,?\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AP]M)?)?$/i)
   if (m) {
-    let mo = +m[1]
-    let da = +m[2]
-    if (mo > 12) [mo, da] = [da, mo]
+    const [mo, da] = dayFirst ?? +m[1] > 12 ? [+m[2], +m[1]] : [+m[1], +m[2]]
     let h = +(m[4] ?? 0)
     if (m[7]?.toUpperCase() === 'PM' && h < 12) h += 12
     if (m[7]?.toUpperCase() === 'AM' && h === 12) h = 0
     const y = +m[3] < 100 ? 2000 + +m[3] : +m[3]
-    return Date.UTC(y, mo - 1, da, h, +(m[5] ?? 0), +(m[6] ?? 0))
+    return utc(y, mo, da, h, +(m[5] ?? 0), +(m[6] ?? 0))
   }
   m = s.match(/^(\d{1,2})[- ]([a-z]{3})[a-z]*[- ](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/i)
   if (m && MONTHS.includes(m[2].toLowerCase())) {
-    return Date.UTC(+m[3], MONTHS.indexOf(m[2].toLowerCase()), +m[1], +(m[4] ?? 0), +(m[5] ?? 0), +(m[6] ?? 0))
+    return utc(+m[3], MONTHS.indexOf(m[2].toLowerCase()) + 1, +m[1], +(m[4] ?? 0), +(m[5] ?? 0), +(m[6] ?? 0))
   }
   return null
+}
+
+/**
+ * Whether "05/11/2026" means 5 November, decided once per file: by the dates that fit one order
+ * only. Dates that fit the other order only are then unreadable, never swapped one by one.
+ */
+export function isDayFirst(stamps: Iterable<string | undefined>): boolean {
+  let day = 0
+  let month = 0
+  for (const s of stamps) {
+    const m = s?.trim().match(/^(\d{1,2})\/(\d{1,2})\/\d{2,4}\b/)
+    if (!m) continue
+    if (+m[1] > 12 && +m[1] <= 31 && +m[2] <= 12) day++
+    else if (+m[2] > 12 && +m[2] <= 31 && +m[1] <= 12) month++
+  }
+  return day > month
 }
 
 function offsetMs(z: string): number {
@@ -236,11 +259,12 @@ export function rowsToPoints(rows: string[][], map: ColumnMap, units: Units = DE
   const lk = units.load === 'lb' ? 0.453592 : 1
   const vehicleOf = (r: string[]) => r[map.vehicle ?? -1]?.trim() || fallbackVehicle
   const home = homeLngs(rows.map((r) => [vehicleOf(r), coord(r[map.lat ?? -1]), coord(r[map.lng ?? -1])]))
+  const dayFirst = isDayFirst(rows.map((r) => r[map.timestamp ?? -1]))
   for (const r of rows) {
     const vehicle = vehicleOf(r)
     const lat = coord(r[map.lat ?? -1])
     const lng = coord(r[map.lng ?? -1])
-    const t = parseTime(r[map.timestamp ?? -1] ?? '', home.get(vehicle))
+    const t = parseTime(r[map.timestamp ?? -1] ?? '', home.get(vehicle), dayFirst)
     if (lat === undefined || lng === undefined || t === null) {
       bad++
       continue
@@ -274,12 +298,13 @@ export function rowsToTrips(rows: string[][], map: ColumnMap, units: Units = DEF
   const lk = units.load === 'lb' ? 0.453592 : 1
   const vehicleOf = (r: string[]) => r[map.vehicle ?? -1]?.trim() || fallbackVehicle
   const home = homeLngs(rows.flatMap((r) => (['start', 'end'] as const).map((e): [string, number | undefined, number | undefined] => [vehicleOf(r), coord(r[map[`${e}Lat`] ?? -1]), coord(r[map[`${e}Lng`] ?? -1])])))
+  const dayFirst = isDayFirst(rows.flatMap((r) => [r[map.start ?? -1], r[map.end ?? -1]]))
   for (const r of rows) {
     const vehicle = vehicleOf(r)
     const startLng = coord(r[map.startLng ?? -1])
     const endLng = coord(r[map.endLng ?? -1])
-    const start = parseTime(r[map.start ?? -1] ?? '', home.get(vehicle))
-    const end = parseTime(r[map.end ?? -1] ?? '', home.get(vehicle))
+    const start = parseTime(r[map.start ?? -1] ?? '', home.get(vehicle), dayFirst)
+    const end = parseTime(r[map.end ?? -1] ?? '', home.get(vehicle), dayFirst)
     const dist = num(r[map.distance ?? -1])
     if (start === null || end === null || dist === undefined || end <= start || dist < 0) {
       bad++
