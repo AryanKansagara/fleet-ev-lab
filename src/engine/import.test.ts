@@ -239,3 +239,31 @@ test('dates and times that do not exist are unreadable', () => {
   assert.equal(parseTime('2026-01-05T24:00'), Date.UTC(2026, 0, 6))
   assert.equal(parseTime('2026-01-05T24:01'), null)
 })
+
+test('number cells: text is not zero, spaces group, and one decimal comma settles the whole file', () => {
+  const map = { vehicle: 0, start: 1, end: 2, distance: 3, idle: 4, load: 5 }
+  const read = (cells: string[][]) => rowsToTrips(cells.map((c) => ['A', '2026-01-05 00:00', '2026-01-05 23:00', ...c]), map)
+  const km = (d: string) => read([[d]]).trips[0]?.km
+  for (const d of ['N/A', 'unknown', 'none', 'Infinity', '-', '', '0x10', '5-6', '1.2.3', '10:30', '1e999', '-5']) assert.equal(km(d), undefined, d)
+  for (const [d, n] of [['12 km', 12], ["12'345", 12345], ['$5', 5], ['C$ 5.50', 5.5], ['(5)', 5], ['1,234', 1234], ['1,234.5', 1234.5], ['1 234.5', 1234.5], ['1 234,5', 1234.5], ['1 034,5 km', 1034.5], ['1.234,5', 1234.5], ['12,5', 12.5], ['1e2', 100], ['.5', 0.5], ['0', 0], ['+7', 7]] as const) near(km(d), n)
+  assert.deepEqual(read([['12,345'], ['7,5']]).trips.map((t) => t.km), [12.345, 7.5])
+  assert.deepEqual(read([['12,345'], ['7.5']]).trips.map((t) => t.km), [12345, 7.5])
+  assert.deepEqual(read([['12,345'], ['999']]).trips.map((t) => t.km), [12345, 999])
+  const odd = read([['10', '-30', '-500']]).trips[0]
+  assert.deepEqual([odd.idleH, odd.loadKg], [0, undefined])
+})
+
+test('points: unreadable coordinates are rejected, hemispheres, odometer miles and GPSLogger m/s are read', () => {
+  const map = { timestamp: 0, lat: 1, lng: 2, odometer: 3, speed: 4 }
+  const one = (lat: string, lng: string) => rowsToPoints([['2026-01-05 08:00', lat, lng]], map)
+  assert.equal(one('N/A', '-79').bad, 1)
+  assert.deepEqual(one('43.6 N', '79.4 W').points.map((p) => [p.lat, p.lng]), [[43.6, -79.4]])
+  assert.deepEqual(one('S33.9', 'E151.2').points.map((p) => [p.lat, p.lng]), [[-33.9, 151.2]])
+  assert.deepEqual(one('43,653', '-79,405').points.map((p) => [p.lat, p.lng]), [[43.653, -79.405]])
+  const head = guessMapping(['vehicle', 'timestamp', 'lat', 'lng', 'Odometer (mi)'])
+  assert.equal(head.units.distance, 'mi')
+  near(rowsToPoints([['A', '2026-01-05 08:00', '43', '-79', '100']], head.map, head.units).points[0].odoKm!, 160.934)
+  assert.equal(guessMapping(['vehicle', 'timestamp', 'lat', 'lng', 'odometer km']).units.distance, 'km')
+  assert.equal(guessMapping(parseCsv(fx('gpslogger-eu.csv'))[0]).units.speed, 'mps')
+  assert.equal(guessMapping(['time', 'lat', 'lon', 'speed']).units.speed, 'kph')
+})

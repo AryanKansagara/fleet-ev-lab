@@ -43,24 +43,24 @@ test.fail('a relocation is not counted as driving', async ({ page }) => {
 
 test.describe('numbers and units', () => {
   // 33.358 km = 20.728 mi on the odometer.
-  test.fail('an odometer in miles gives the same distance as the GPS', async ({ page }) => {
+  test('an odometer in miles gives the same distance as the GPS', async ({ page }) => {
     const rows = north().map((r, i) => [...r, (1000 + (i * 1.11195) / 1.60934).toFixed(3)].join(','))
     await importFleet(page, 'p.csv', ['vehicle,timestamp,lat,lng,Odometer (mi)', ...rows].join('\n'))
     expect(await result(page, 'Van 1')).toMatchObject({ avg_day_km: '33.4' })
   })
-  test.fail('"N/A" is not a distance of zero', async ({ page }) => {
+  test('"N/A" is not a distance of zero', async ({ page }) => {
     await importFleet(page, 't.csv', trips('vehicle,start,end,distance', 'Van 1,2026-01-05 08:00,2026-01-05 10:00,50', 'Van 1,2026-01-06 08:00,2026-01-06 10:00,N/A'))
     await expect(status(page)).toContainText('1 vehicles · 1 trips')
   })
-  test.fail('a decimal comma with three digits is a decimal in a decimal-comma file', async ({ page }) => {
+  test('a decimal comma with three digits is a decimal in a decimal-comma file', async ({ page }) => {
     await importFleet(page, 't.csv', trips('vehicle;start;end;distance', 'Van 1;2026-01-05 08:00;2026-01-05 10:00;12,345', 'Van 1;2026-01-05 12:00;2026-01-05 13:00;7,5'))
     expect(await result(page, 'Van 1')).toMatchObject({ avg_day_km: '19.8' })
   })
-  test.fail('a space thousands separator is read', async ({ page }) => {
+  test('a space thousands separator is read', async ({ page }) => {
     await importFleet(page, 't.csv', trips('vehicle;start;end;distance', 'Van 1;2026-01-05 00:00;2026-01-05 23:00;1 034,5'))
     expect(await result(page, 'Van 1')).toMatchObject({ avg_day_km: '1034.5' })
   })
-  test.fail('GPSLogger speed is recognised as m/s', async ({ page }) => {
+  test('GPSLogger speed is recognised as m/s', async ({ page }) => {
     await upload(page, [{ name: 'g.csv', data: 'time,lat,lon,elevation,accuracy,bearing,speed,satellites,provider\n2026-01-14T12:31:00.000Z,43.6581,-79.405,92,4,61,10.5,14,gps\n2026-01-14T12:32:10.000Z,43.661,-79.397,95,3,63,12.5,15,gps\n' }])
     await expect(page.getByLabel('Speed unit')).toHaveValue('mps')
   })
