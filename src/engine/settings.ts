@@ -53,6 +53,14 @@ export function nearestClimate(lat: number, lng: number) {
   return best
 }
 
+/** The profile to use with a fleet at these depots: the nearest, unless the user chose or edited one or no depot has a position. */
+export function climateFor(current: Settings['climate'], depots: { lat: number; lng: number }[]): Settings['climate'] {
+  const d = depots.find((x) => x.lat || x.lng)
+  if (!d || current.chosen || !CLIMATES.some((c) => c.name === current.name)) return current
+  const { name, monthly } = nearestClimate(d.lat, d.lng)
+  return name === current.name ? current : { name, monthly }
+}
+
 export function defaultSettings(): Settings {
   return {
     curve: defaultCurve(),

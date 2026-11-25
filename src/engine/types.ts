@@ -140,7 +140,8 @@ export interface Settings {
   }
   modelEdits: Record<string, Partial<EvModel>>
   customModels: EvModel[]
-  climate: { name: string; monthly: number[] }
+  /** `chosen` is set when the user picked the profile, so a fleet's nearest one does not replace it. */
+  climate: { name: string; monthly: number[]; chosen?: boolean }
 }
 
 export type Reason = 'payload' | 'range' | 'cold' | 'charging' | 'no-depot'

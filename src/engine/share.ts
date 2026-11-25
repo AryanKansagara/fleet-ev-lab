@@ -111,7 +111,7 @@ export function mergeSettings(raw: unknown): Settings {
     tco: pick(d.tco, raw.tco),
     modelEdits: isObj(raw.modelEdits) ? Object.fromEntries(Object.entries(raw.modelEdits).map(([id, e]) => [id, modelFields(e)] as const).filter(([, e]) => Object.keys(e).length)) : {},
     customModels: custom.filter((m, i) => custom.findIndex((x) => x.id === m.id) === i),
-    climate: isObj(c) && text(c.name) && Array.isArray(c.monthly) && c.monthly.length === 12 && c.monthly.every((t) => num(t, -100, 100)) ? { name: c.name, monthly: c.monthly } : d.climate,
+    climate: isObj(c) && text(c.name) && Array.isArray(c.monthly) && c.monthly.length === 12 && c.monthly.every((t) => num(t, -100, 100)) ? { name: c.name, monthly: c.monthly, ...(c.chosen === true ? { chosen: true } : {}) } : d.climate,
   }
 }
 

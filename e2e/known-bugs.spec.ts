@@ -183,13 +183,50 @@ test.describe('vehicle edits', () => {
   })
 })
 
-test.fail('a climate profile picked by the user survives a reload', async ({ page }) => {
-  await openLab(page)
-  await tab(page, 'Assumptions')
-  await page.getByLabel('Start from').selectOption('Winnipeg')
-  await page.reload()
-  await tab(page, 'Assumptions')
-  await expect(page.getByLabel('Start from')).toHaveValue('Winnipeg')
+test.describe('climate profile', () => {
+  const at = (lat: number, lng: number) => `vehicle,start,end,distance,load,start lat,start lng,end lat,end lng\nVan 1,2026-01-05 08:00,2026-01-05 12:00,160,0,${lat},${lng},${lat},${lng}\n`
+  const shown = async (page: Page, name: string) => {
+    await tab(page, 'Assumptions')
+    await expect(page.getByLabel('Start from')).toHaveValue(name)
+  }
+  test('one picked by the user survives a reload and another fleet', async ({ page }) => {
+    await openLab(page)
+    await tab(page, 'Assumptions')
+    await page.getByLabel('Start from').selectOption('Winnipeg')
+    await page.reload()
+    await shown(page, 'Winnipeg')
+    await fleetPick(page).selectOption('rural')
+    await expect(status(page)).toContainText('8 vehicles')
+    await expect(status(page)).toContainText('using the Winnipeg climate profile')
+    await page.getByLabel('Start from').selectOption('Nearest to the fleet')
+    await shown(page, 'Red Deer')
+    await page.reload()
+    await shown(page, 'Toronto')
+  })
+  test('one picked by the sender arrives through a link', async ({ page, browser, context }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+    await openLab(page)
+    await tab(page, 'Assumptions')
+    await page.getByLabel('Start from').selectOption('Winnipeg')
+    await openExport(page)
+    await page.getByRole('button', { name: 'Copy settings link' }).click()
+    await expect(page.getByText('It contains no GPS data.')).toBeVisible()
+    const url = await page.evaluate(() => navigator.clipboard.readText())
+    const other = await browser.newContext()
+    await other.route('**/*', (r) => (r.request().url().startsWith(new URL(url).origin) ? r.continue() : r.abort()))
+    const p2 = await other.newPage()
+    await openLab(p2, url)
+    await shown(p2, 'Winnipeg')
+    await p2.reload()
+    await shown(p2, 'Winnipeg')
+    await other.close()
+  })
+  test('a new fleet picks the nearest one when nothing was chosen', async ({ page }) => {
+    await importFleet(page, 't.csv', at(51.05, -114.07))
+    await shown(page, 'Calgary')
+    await page.reload()
+    await shown(page, 'Calgary')
+  })
 })
 
 test.fail('edits made after copying a settings link survive a reload', async ({ page, context }) => {

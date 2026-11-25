@@ -4,8 +4,8 @@ import { test } from 'node:test'
 import { CATALOGUE } from './catalogue.ts'
 import { buildSample, type RouteFile } from './samples.ts'
 import { assembleFleet } from './segment.ts'
-import { defaultSettings } from './settings.ts'
-import { decodeSettings, mergeSettings, readFleet } from './share.ts'
+import { climateFor, CLIMATES, defaultSettings } from './settings.ts'
+import { decodeSettings, encodeSettings, mergeSettings, readFleet } from './share.ts'
 import { analyzeFleet } from './sim.ts'
 import type { Settings, Trip } from './types.ts'
 
@@ -45,4 +45,19 @@ test('saved fleets: a good one is kept, a damaged one is refused', () => {
   assert.deepEqual(readFleet(copy()), copy())
   for (const id of ['toronto', 'rural'] as const) assert.ok(readFleet(JSON.parse(JSON.stringify(buildSample(id, routesOf(id))))))
   for (const b of [null, {}, [], { ...copy(), trips: [] }, { ...copy(), trips: [null] }, { ...copy(), vehicles: [{}] }, { ...copy(), trips: [{ ...copy().trips[0], km: null }] }, { ...copy(), trips: [{ ...copy().trips[0], speedKm: [1] }] }]) assert.equal(readFleet(b), null)
+})
+
+test('climate: the nearest profile unless one was chosen or edited, and a choice survives a link', async () => {
+  const winnipeg = { name: 'Winnipeg', monthly: CLIMATES.find((c) => c.name === 'Winnipeg')!.monthly }
+  const custom = { name: 'Custom', monthly: Array(12).fill(5) }
+  const calgary = [{ lat: 0, lng: 0 }, { lat: 51, lng: -114 }]
+  const chosen = { ...winnipeg, chosen: true }
+  assert.equal(climateFor(winnipeg, calgary).name, 'Calgary')
+  assert.equal(climateFor(winnipeg, calgary).chosen, undefined)
+  assert.equal(climateFor(chosen, calgary), chosen)
+  assert.equal(climateFor(custom, calgary), custom)
+  assert.equal(climateFor(winnipeg, [{ lat: 0, lng: 0 }]), winnipeg)
+  assert.equal(climateFor(winnipeg, [{ lat: 49.9, lng: -97 }]), winnipeg)
+  for (const climate of [winnipeg, custom, chosen]) assert.deepEqual((await decodeSettings(await encodeSettings({ ...defaultSettings(), climate })))!.climate, climate)
+  for (const bad of ['yes', 1, null, false]) assert.deepEqual(mergeSettings({ climate: { ...winnipeg, chosen: bad } }).climate, winnipeg)
 })
