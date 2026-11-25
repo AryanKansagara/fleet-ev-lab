@@ -57,6 +57,8 @@ function saveFleet(f: Fleet | null): 'saved' | 'no-paths' | 'too-big' | 'none' {
   }
 }
 
+const clearHash = () => history.replaceState(history.state, '', location.pathname + location.search)
+
 function worstDay(vehicles: VehicleResult[], first: number): number {
   const fails = new Map<number, number>()
   for (const v of vehicles) for (const d of v.days) fails.set(d.day, (fails.get(d.day) ?? 0) + (d.failed ? 100 : 0) + 1)
@@ -87,15 +89,27 @@ export default function Tool() {
   const [fleetError] = useState(() => !ownFleet && localStorage.getItem(FLEET_KEY) !== null)
   const [storeNote, setStoreNote] = useState('')
   const [playing, setPlaying] = useState(true)
+  const shownLink = useRef('')
+  const latest = useRef(settings)
   const tabRefs = useRef<Partial<Record<Tab, HTMLButtonElement | null>>>({})
 
   useEffect(() => {
     const m = location.hash.match(/^#s=(.+)$/)
-    if (m) decodeSettings(m[1]).then((s) => { if (s) setSettings(s); else setLinkError(true) })
+    if (!m) return
+    decodeSettings(m[1]).then((s) => {
+      if (!s) return setLinkError(true)
+      setSettings(s)
+      // The link is used up. Left in the address bar it would undo later edits on every reload.
+      if (location.hash === m[0]) clearHash()
+    })
   }, [])
 
   useEffect(() => {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))
+    // A link shown in the address bar for copying no longer matches once the settings change.
+    if (shownLink.current && location.hash === shownLink.current) clearHash()
+    shownLink.current = ''
+    latest.current = settings
   }, [settings])
 
   useEffect(() => {
@@ -165,13 +179,14 @@ export default function Tool() {
   }
 
   const copyShare = async () => {
-    const hash = await encodeSettings(settings)
-    const url = `${location.origin}/app#s=${hash}`
-    history.replaceState(null, '', `/app#s=${hash}`)
+    const url = `${location.origin}/app#s=${await encodeSettings(settings)}`
     try {
       await navigator.clipboard.writeText(url)
       flash('Settings link copied. It contains no GPS data.')
     } catch {
+      // The clipboard can be refused late, after another edit, so the link shown is of the settings as they are now.
+      shownLink.current = `#s=${await encodeSettings(latest.current)}`
+      history.replaceState(null, '', `/app${shownLink.current}`)
       flash('The address bar now holds the settings link. It contains no GPS data.')
     }
   }
