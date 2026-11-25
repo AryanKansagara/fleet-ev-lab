@@ -296,7 +296,8 @@ export function analyzeFleet(f: Fleet, s: Settings, tm: TempMode, assignment?: R
     const auto = s.charging.chargers <= 0
     const chargers = auto ? sizeChargers(xs, s, temp, first, last) : s.charging.chargers
     const out = simDepot(xs, s, temp, first, last, chargers, startSlot, true)
-    const open = simDepot(xs, s, temp, first, last, xs.length, 0, false)
+    // Nothing is managed in this comparison, so the site cap does not hold it down either.
+    const open = simDepot(xs, { ...s, charging: { ...s.charging, siteCapKw: 0 } }, temp, first, last, xs.length, 0, false)
     for (const [v, d] of out.dayResults) dayMap.set(v, d)
     let worst = 0
     let worstKwh = -1

@@ -427,3 +427,15 @@ test('vehicle edits change only the vehicles they name and leave the loaded flee
   assert.equal(analyzeFleet(f, s, { mode: 'observed' }).vehicles[1].cls, 'van')
   assert.equal(analyzeFleet(e, s, { mode: 'observed' }).vehicles[1].cls, 'pickup')
 })
+
+test('the unmanaged peak ignores the site cap, the managed plan keeps it', () => {
+  const s = onlyVan(defaultSettings())
+  s.charging.siteCapKw = 12
+  const run = (t: Settings) => analyzeFleet(fleet([trip({ km: 160 }), trip({ vehicle: 'B', km: 160 })]), t, { mode: 'observed' }, { A: VAN.id, B: VAN.id }).depots[0]
+  const d = run(s)
+  // Two E-Transits at 11.3 kW each.
+  assert.ok(Math.abs(d.unmanagedPeakKw - 22.6) < 1e-9, String(d.unmanagedPeakKw))
+  assert.ok(d.peakKw <= 12 && d.peakKw > 11)
+  const uncapped = run({ ...s, charging: { ...s.charging, siteCapKw: 0 } })
+  assert.equal(uncapped.unmanagedPeakKw, d.unmanagedPeakKw)
+})
