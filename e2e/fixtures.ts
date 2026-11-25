@@ -5,15 +5,11 @@ import { readFile } from 'node:fs/promises'
 const FONT_HOSTS = new Set(['fonts.googleapis.com', 'fonts.gstatic.com'])
 export const DOCUMENTED = new Set(['tile.openstreetmap.org', 'archive-api.open-meteo.com'])
 
-/** Known bug: Leaflet's zoom timer fires after the map is removed. Only this exact error is tolerated, and known-bugs.spec.ts pins it. */
-const LEAFLET_TIMER = "TypeError: Cannot read properties of undefined (reading '_leaflet_pos')"
-
-export const test = base.extend<{ external: string[]; strictMap: boolean }>({
+export const test = base.extend<{ external: string[] }>({
   external: async ({}, use) => { await use([]) },
-  strictMap: [false, { option: true }],
 
   // Any request to an undocumented host fails the test, and so does any uncaught page error.
-  context: async ({ context, baseURL, external, strictMap }, use) => {
+  context: async ({ context, baseURL, external }, use) => {
     const errors: string[] = []
     const origin = new URL(baseURL!).origin
     await context.route('**/*', (route) => {
@@ -23,10 +19,7 @@ export const test = base.extend<{ external: string[]; strictMap: boolean }>({
       if (!DOCUMENTED.has(url.host)) external.push(url.host)
       return route.abort('blockedbyclient')
     })
-    context.on('weberror', (e) => {
-      const message = String(e.error())
-      if (strictMap || message !== LEAFLET_TIMER) errors.push(message)
-    })
+    context.on('weberror', (e) => { errors.push(String(e.error())) })
     await use(context)
     expect(errors, 'uncaught page errors').toEqual([])
     expect(external, 'requests to undocumented hosts').toEqual([])

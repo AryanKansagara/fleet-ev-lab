@@ -300,18 +300,48 @@ test('the same MyGeotab trip twice is counted once', async ({ page }) => {
   await expect(status(page)).toContainText('2 repeated trips left out')
 })
 
-test.describe('map', () => {
-  test.use({ strictMap: true })
-  test.fail('leaving the Overview during a zoom raises no page error', async ({ page }) => {
+test.describe('leaving the Overview raises no page error', () => {
+  const leave = async (page: Page, zoom: (map: HTMLElement) => void, delays: number[]) => {
     await openLab(page)
-    const zoom = page.locator('.leaflet-control-zoom-in')
-    await expect(zoom).toBeVisible()
-    await page.waitForTimeout(2500)
-    const error = page.waitForEvent('pageerror', { timeout: 5000 }).catch(() => null)
-    await zoom.evaluate((el: HTMLElement) => {
-      el.click()
-      requestAnimationFrame(() => setTimeout(() => document.getElementById('tab-Vehicles')!.click(), 0))
-    })
-    expect(await error).toBeNull()
+    await page.locator('.leaflet-control-zoom-in').waitFor()
+    const errors: string[] = []
+    page.on('pageerror', (e) => errors.push(e.message))
+    await page.waitForTimeout(1500)
+    for (const ms of delays) {
+      await tab(page, 'Overview')
+      await page.locator('.leaflet-control-zoom-in').waitFor()
+      await page.waitForTimeout(800)
+      await page.locator('.leaflet-container').evaluate(zoom)
+      await page.evaluate((d) => new Promise<void>((ok) => setTimeout(() => { document.getElementById('tab-Vehicles')!.click(); ok() }, d)), ms)
+      await page.waitForTimeout(500)
+    }
+    expect(errors).toEqual([])
+  }
+  test('during a button zoom', async ({ page }) => {
+    await leave(page, (map) => map.querySelector<HTMLElement>('.leaflet-control-zoom-in')!.click(), [0, 30, 100, 180])
+  })
+  test('during a wheel zoom', async ({ page }) => {
+    await leave(page, (map) => {
+      const r = map.getBoundingClientRect()
+      map.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: r.left + 200, clientY: r.top + 200, deltaY: -120 }))
+    }, [0, 20, 100, 180])
+  })
+  test('as soon as the map appears', async ({ page }) => {
+    await openLab(page)
+    await page.locator('.leaflet-control-zoom-in').waitFor()
+    const errors: string[] = []
+    page.on('pageerror', (e) => errors.push(e.message))
+    for (const ms of [5, 10, 20, 45, 100]) {
+      await tab(page, 'Vehicles')
+      await page.waitForTimeout(500)
+      await page.evaluate(async (d) => {
+        document.getElementById('tab-Overview')!.click()
+        while (!document.querySelector('.leaflet-control-zoom-in')) await new Promise((ok) => setTimeout(ok, 1))
+        await new Promise((ok) => setTimeout(ok, d))
+        document.getElementById('tab-Vehicles')!.click()
+      }, ms)
+      await page.waitForTimeout(500)
+    }
+    expect(errors).toEqual([])
   })
 })
