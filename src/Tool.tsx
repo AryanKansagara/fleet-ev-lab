@@ -6,7 +6,7 @@ import { CATALOGUE_AS_OF, INCENTIVE_NOTES } from './engine/catalogue.ts'
 import { fetchLivePrices, STATCAN_TABLE, type LivePrices } from './engine/prices.ts'
 import { loadSample, samplePointsCsv, SAMPLES, type SampleId } from './engine/samples.ts'
 import { allModels, CLIMATES, candidateModels, defaultSettings, nearestClimate } from './engine/settings.ts'
-import { decodeSettings, encodeSettings, mergeSettings } from './engine/share.ts'
+import { decodeSettings, encodeSettings, mergeSettings, readFleet } from './engine/share.ts'
 import { analyzeFleet, invalidateFleet, middayUplift, planRollout, type TempMode } from './engine/sim.ts'
 import { REASON_LABEL, type Fleet, type Reason, type Settings, type VClass, type VehicleResult } from './engine/types.ts'
 import { applyWeather, climateStressWeek, fetchColdestWeek, type StressWeek } from './engine/weather.ts'
@@ -30,7 +30,7 @@ function loadStoredSettings(): Settings {
 function loadStoredFleet(): Fleet | null {
   try {
     const raw = localStorage.getItem(FLEET_KEY)
-    return raw ? (JSON.parse(raw) as Fleet) : null
+    return raw ? readFleet(JSON.parse(raw)) : null
   } catch {
     return null
   }
@@ -67,8 +67,8 @@ function worstDay(vehicles: VehicleResult[], first: number): number {
 
 export default function Tool() {
   const [settings, setSettings] = useState<Settings>(loadStoredSettings)
-  const [sample, setSample] = useState<SampleId | 'own'>(() => (localStorage.getItem(FLEET_KEY) ? 'own' : 'toronto'))
   const [ownFleet, setOwnFleet] = useState<Fleet | null>(loadStoredFleet)
+  const [sample, setSample] = useState<SampleId | 'own'>(ownFleet ? 'own' : 'toronto')
   const [baseFleet, setBaseFleet] = useState<Fleet | null>(null)
   const [fleet, setFleet] = useState<Fleet | null>(null)
   const [weather, setWeather] = useState<{ state: 'loading' | 'archive' | 'climate'; matched?: number; total?: number }>({ state: 'loading' })
@@ -79,13 +79,15 @@ export default function Tool() {
   const [selected, setSelected] = useState<string | null>(null)
   const [assignment, setAssignment] = useState<Record<string, string>>({})
   const [toast, setToast] = useState('')
+  const [linkError, setLinkError] = useState(false)
+  const [fleetError] = useState(() => !ownFleet && localStorage.getItem(FLEET_KEY) !== null)
   const [storeNote, setStoreNote] = useState('')
   const [playing, setPlaying] = useState(true)
   const tabRefs = useRef<Partial<Record<Tab, HTMLButtonElement | null>>>({})
 
   useEffect(() => {
     const m = location.hash.match(/^#s=(.+)$/)
-    if (m) decodeSettings(m[1]).then((s) => { if (s) setSettings(s) })
+    if (m) decodeSettings(m[1]).then((s) => { if (s) setSettings(s); else setLinkError(true) })
   }, [])
 
   useEffect(() => {
@@ -258,6 +260,8 @@ export default function Tool() {
       </div>
 
       <main className="wrap tool-main">
+        {linkError ? <p className="error" role="alert">That settings link could not be read, so your own settings are unchanged.</p> : null}
+        {fleetError && !ownFleet ? <p className="error" role="alert">The fleet saved in this browser is damaged and could not be opened. Import it again.</p> : null}
         {!fleet || !result ? (
           <div className="loading-panel" role="status"><div className="pulse" />Building the fleet and running the first simulation</div>
         ) : (
@@ -265,6 +269,7 @@ export default function Tool() {
             <div className="status-line no-print">
               {fleet.synthetic ? <SyntheticTag /> : <span className="synthetic own">Your data, in this browser only</span>}
               <span>{fleet.vehicles.length} vehicles · {fleet.trips.length.toLocaleString('en-CA')} trips · {fmtDate(result.firstDay)} to {fmtDate(result.lastDay)}</span>
+              {fleet.notes?.length ? <span className="error">{fleet.notes.join(' · ')}</span> : null}
               <span>
                 {weather.state === 'loading' ? 'Fetching historical temperatures' : weather.state === 'archive' ? `Open-Meteo temperatures on ${weather.matched?.toLocaleString('en-CA')} of ${weather.total?.toLocaleString('en-CA')} trips` : `Weather archive unavailable: using the ${settings.climate.name} climate profile`}
                 {temp.mode === 'stress' && stress ? ` · Stress week: ${stress.source === 'archive' ? `from ${stress.start}, the coldest in five years` : 'estimated from the climate profile'}` : ''}
@@ -730,7 +735,7 @@ function Report({ fleet, settings, temp, result, tempLabel, reasons }: { fleet: 
   return (
     <article className="report" aria-hidden="true">
       <h1>Fleet EV Lab report</h1>
-      <p>{fleet.name}. {fleet.synthetic ? 'SYNTHETIC SAMPLE DATA, not real vehicles.' : 'Customer-supplied data, processed in the browser.'} Dated {new Date().toISOString().slice(0, 10)}. Results {tempLabel}.</p>
+      <p>{fleet.name}. {fleet.synthetic ? 'SYNTHETIC SAMPLE DATA, not real vehicles.' : 'Customer-supplied data, processed in the browser.'}{fleet.notes?.length ? ` ${fleet.notes.join('. ')}.` : ''} Dated {new Date().toISOString().slice(0, 10)}. Results {tempLabel}.</p>
       <p>{result.pct.toFixed(1)}% of {result.opDays.toLocaleString('en-CA')} vehicle-days completed. {result.readyCount} of {result.vehicles.length} vehicles ready. {result.chargers} chargers, {result.peakKw.toFixed(0)} kW peak. {money(result.savings, cur)} saved over {settings.tco.years} years, excluding holds. {result.co2Tonnes.toFixed(0)} t CO2 avoided a year.</p>
       {reasons.length ? <p>Failure days: {reasons.map(([r, n]) => `${REASON_LABEL[r]} ${n}`).join(', ')}.</p> : null}
       <table>
