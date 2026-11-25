@@ -15,6 +15,7 @@ const unread = (t: Tally, what: string, ...more: string[]) => {
   const notes = [...(t.bad ? [`${t.bad.toLocaleString('en-CA')} of ${t.total.toLocaleString('en-CA')} ${what} could not be read`] : []), ...more]
   return notes.length ? notes : undefined
 }
+const repeated = (n: number) => (n ? [`${n.toLocaleString('en-CA')} repeated ${n === 1 ? 'trip' : 'trips'} left out`] : [])
 const cutOff = (name: string) => `${name} is cut off: its end is missing`
 
 interface Pending {
@@ -52,7 +53,7 @@ export default function Import({ onFleet }: { onFleet: (f: Fleet) => void }) {
     if (/^\s*[[{]/.test(text)) {
       const geo = parseGeotabJson(text, name.replace(/\.[^.]+$/, ''))
       if (!geo) return setError('That JSON is not a list of MyGeotab LogRecord or Trip objects.')
-      const notes = unread(geo, 'records')
+      const notes = unread(geo, 'records', ...('trips' in geo ? repeated(geo.repeats) : []))
       if ('trips' in geo) return finish(assembleFleet(geo.trips, { name, notes, defaultCls: cls, defaultLoadKg: loadKg }))
       if (!geo.points.length) return setError('Those LogRecords have no usable coordinates.')
       setGpx({ name, points: geo.points, notes })
@@ -126,9 +127,9 @@ export default function Import({ onFleet }: { onFleet: (f: Fleet) => void }) {
       if (!points.length) return setError(`None of the ${bad} rows could be read. Check the timestamp and coordinate columns.`)
       finish(fleetFromPoints(points, { name: pending.name, notes: unread({ total: pending.rows.length, bad }, 'rows'), ...opts }, seg))
     } else {
-      const { trips, bad } = rowsToTrips(pending.rows, pending.map, units, pending.name.replace(/\.[^.]+$/, ''))
+      const { trips, bad, repeats } = rowsToTrips(pending.rows, pending.map, units, pending.name.replace(/\.[^.]+$/, ''))
       if (!trips.length) return setError(`None of the ${bad} rows could be read. Check the start, end and distance columns.`)
-      finish(assembleFleet(trips, { name: pending.name, notes: unread({ total: pending.rows.length, bad }, 'rows'), ...opts }))
+      finish(assembleFleet(trips, { name: pending.name, notes: unread({ total: pending.rows.length, bad }, 'rows', ...repeated(repeats)), ...opts }))
     }
   }
 

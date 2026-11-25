@@ -267,3 +267,28 @@ test('points: unreadable coordinates are rejected, hemispheres, odometer miles a
   assert.equal(guessMapping(parseCsv(fx('gpslogger-eu.csv'))[0]).units.speed, 'mps')
   assert.equal(guessMapping(['time', 'lat', 'lon', 'speed']).units.speed, 'kph')
 })
+
+test('a trip listed twice is counted once, and the number left out is reported', () => {
+  const map = { vehicle: 0, start: 1, end: 2, distance: 3, idle: 4, load: 5, endLat: 6, endLng: 7 }
+  const row = ['A', '2026-01-05 08:00', '2026-01-05 12:00', '160']
+  const read = (...rows: string[][]) => {
+    const r = rowsToTrips(rows, map)
+    return [r.trips.map((t) => t.km), r.repeats, r.bad]
+  }
+  assert.deepEqual(read(row, row, row), [[160], 2, 0])
+  assert.deepEqual(read(row, ['A', '01/05/2026 8:00 AM', '2026-01-05T12:00:00', '160.0']), [[160], 1, 0])
+  assert.deepEqual(read(row, ['B', ...row.slice(1)], [...row.slice(0, 3), '161'], ['A', '2026-01-05 08:01', '2026-01-05 12:00', '160'], ['A', '2026-01-05 08:00', '2026-01-05 12:01', '160'], ['A', 'x', 'y', '160']), [[160, 160, 161, 160, 160], 0, 1])
+  // A repeat fills in what the first listing lacks and changes nothing it has.
+  const full = [...row, '30', '500', '43.7', '-79.4']
+  const [t] = rowsToTrips([row, full], map).trips
+  assert.deepEqual([t.idleH, t.loadKg, t.to], [0.5, 500, [43.7, -79.4]])
+  assert.deepEqual(rowsToTrips([full, [...row, '60', '900', '10', '10']], map).trips[0], rowsToTrips([full], map).trips[0])
+
+  const g = JSON.parse(fx('geotab-trips.json')).result
+  const once = parseGeotabJson(JSON.stringify(g))
+  const twice = parseGeotabJson(JSON.stringify([...g, ...g, null]))
+  assert.ok(once && 'trips' in once && twice && 'trips' in twice)
+  // The start of each trip is still the stop before it, not its own repeat.
+  assert.equal(JSON.stringify(twice.trips), JSON.stringify(once.trips))
+  assert.deepEqual([once.repeats, once.bad, twice.repeats, twice.bad, twice.total], [0, 0, 3, 1, 7])
+})
