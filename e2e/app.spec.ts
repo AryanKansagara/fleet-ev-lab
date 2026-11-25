@@ -1,4 +1,4 @@
-import { test, expect, fleetPick, openLab, tab, kpi, status, setTemp, pickModel, exportCsv, download, importFleet, result, TRIP } from './fixtures.ts'
+import { test, expect, fleetPick, openLab, openExport, tab, kpi, status, setTemp, pickModel, exportCsv, download, importFleet, result, TRIP } from './fixtures.ts'
 
 test('landing: slider drives the live engine, and links reach the lab and docs', async ({ page }) => {
   await page.goto('/')
@@ -119,7 +119,7 @@ test('a settings link carries the settings and no trips', async ({ page, browser
   await importFleet(page, 'mine.csv', TRIP.replace('Van 1', 'SECRET-VAN'))
   await tab(page, 'Charging')
   await page.getByLabel(/^Required buffer/).fill('22')
-  await page.locator('summary', { hasText: 'Export' }).click()
+  await openExport(page)
   await page.getByRole('button', { name: 'Copy settings link' }).click()
   await expect(page.getByText('It contains no GPS data.')).toBeVisible()
   const url = await page.evaluate(() => navigator.clipboard.readText())

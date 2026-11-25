@@ -85,8 +85,16 @@ export async function download(page: Page, trigger: Locator): Promise<[string, s
   return [d.suggestedFilename(), await readFile((await d.path())!, 'utf8')]
 }
 
+/** An import scrolls the page smoothly, and a click that lands mid-scroll may not open the menu, so check that it did. */
+export async function openExport(page: Page) {
+  await expect(async () => {
+    if (!(await page.locator('details.menu[open]').count())) await page.locator('summary', { hasText: 'Export' }).click()
+    await expect(page.locator('details.menu[open]')).toHaveCount(1, { timeout: 2000 })
+  }).toPass()
+}
+
 export async function exportCsv(page: Page, name: 'Results CSV' | 'Failure days CSV'): Promise<[string, string]> {
-  await page.locator('summary', { hasText: 'Export' }).click()
+  await openExport(page)
   return download(page, page.getByRole('button', { name, exact: true }))
 }
 
