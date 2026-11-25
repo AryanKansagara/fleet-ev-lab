@@ -1,4 +1,4 @@
-// Each test states the correct behaviour of an open bug. test.fail flips to a plain test in the PR that fixes it.
+// Each test states the correct behaviour of a reported bug. test.fail flips to a plain test in the PR that fixes it.
 import { test, expect as slow, importFleet, upload, alert, status, result, tab, kpi, openLab, setTemp, pointsCsv, gpx, north, track, TRIP } from './fixtures.ts'
 
 const expect = slow.configure({ timeout: 20_000 })
@@ -36,7 +36,7 @@ test.describe('dates', () => {
 })
 
 // 15 steps before and 14 after a 500 km relocation, each 0.005 degree: 29 x 0.55597 = 16.1 km driven.
-test.fail('a relocation is not counted as driving', async ({ page }) => {
+test('a relocation is not counted as driving', async ({ page }) => {
   await importFleet(page, 'p.csv', pointsCsv(track(31, (i) => [43 + i * 0.005 + (i > 15 ? 4.5 : 0), -79.5])))
   expect(await result(page, 'Van 1')).toMatchObject({ avg_day_km: '16.1' })
 })

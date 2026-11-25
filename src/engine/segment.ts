@@ -103,6 +103,13 @@ export function segmentTrips(points: GpsPoint[], opts: SegmentOptions = DEFAULT_
     }
     const stationaryMs = prev.t - anchor.t
     const silentMs = p.t - prev.t
+    // Faster than any jump limit means it was moved, not driven: a tow, a ferry, a unit put in another vehicle. Same-time fixes may be up to a minute apart.
+    if (haversineKm(prev.lat, prev.lng, p.lat, p.lng) / (Math.max(silentMs || 60e3, 1000) / 3600e3) > opts.maxKph) {
+      close()
+      anchor = p
+      prev = p
+      continue
+    }
     const legKph = silentMs > 0 ? d / (silentMs / 3600e3) : 0
     // Silent gap: implausibly slow means it parked and moved on, otherwise it is a telemetry dropout mid-trip.
     const silentStop = silentMs >= stopMs && legKph < 15
