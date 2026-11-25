@@ -1,5 +1,5 @@
 // Each test states the correct behaviour of a reported bug. test.fail flips to a plain test in the PR that fixes it.
-import { test, expect as slow, importFleet, upload, alert, status, result, tab, kpi, openLab, setTemp, pointsCsv, gpx, north, track, TRIP } from './fixtures.ts'
+import { test, expect as slow, importFleet, upload, alert, status, result, tab, kpi, openLab, openExport, setTemp, pointsCsv, gpx, north, track, TRIP } from './fixtures.ts'
 
 const expect = slow.configure({ timeout: 20_000 })
 
@@ -139,7 +139,7 @@ test.fail('a climate profile picked by the user survives a reload', async ({ pag
 test.fail('edits made after copying a settings link survive a reload', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
   await openLab(page)
-  await page.locator('summary', { hasText: 'Export' }).click()
+  await openExport(page)
   await page.getByRole('button', { name: 'Copy settings link' }).click()
   await expect(page.getByText('It contains no GPS data.')).toBeVisible()
   await tab(page, 'Charging')
