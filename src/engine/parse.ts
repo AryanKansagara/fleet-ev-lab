@@ -322,7 +322,28 @@ export function bandKm(km: number, avgKph: number): Trip['speedKm'] {
   return b
 }
 
-export function rowsToTrips(rows: string[][], map: ColumnMap, units: Units = DEFAULT_UNITS, fallbackVehicle = 'Vehicle 1'): { trips: Trip[]; bad: number } {
+/** Counts each trip once when overlapping exports list it again: same vehicle, start, end and distance. Detail that only a repeat has is kept. */
+function dropRepeats(all: Trip[]): { trips: Trip[]; repeats: number } {
+  const seen = new Map<string, Trip>()
+  for (const t of all) {
+    const key = JSON.stringify([t.vehicle, t.start, t.end, t.km])
+    const first = seen.get(key)
+    if (!first) {
+      seen.set(key, t)
+      continue
+    }
+    first.loadKg ??= t.loadKg
+    first.from ??= t.from
+    first.to ??= t.to
+    if (!first.idleH && t.idleH) {
+      first.idleH = t.idleH
+      first.speedKm = t.speedKm
+    }
+  }
+  return { trips: [...seen.values()], repeats: all.length - seen.size }
+}
+
+export function rowsToTrips(rows: string[][], map: ColumnMap, units: Units = DEFAULT_UNITS, fallbackVehicle = 'Vehicle 1'): { trips: Trip[]; bad: number; repeats: number } {
   const trips: Trip[] = []
   let bad = 0
   const dk = units.distance === 'mi' ? 1.60934 : 1
@@ -361,7 +382,7 @@ export function rowsToTrips(rows: string[][], map: ColumnMap, units: Units = DEF
       to: endLat !== undefined && endLng !== undefined ? [endLat, endLng] : undefined,
     })
   }
-  return { trips, bad }
+  return { ...dropRepeats(trips), bad }
 }
 
 const GENERIC_TRACK = /^(active log|current track|track|untitled|\d{4}-\d{2}-\d{2}[ T][\d:]+.*|.*\b(ride|run|walk|drive|activity)\b.*)$/i
@@ -424,7 +445,7 @@ const deviceName = (o: GeoItem, fallback: string) => (typeof o.device === 'strin
  * "hh:mm:ss" span, stopPoint {x: lng, y: lat}). Device ids stand in for names unless a name is included.
  * Returns null when the JSON is neither.
  */
-export function parseGeotabJson(text: string, fallbackVehicle = 'Vehicle 1'): (Tally & ({ points: GpsPoint[] } | { trips: Trip[] })) | null {
+export function parseGeotabJson(text: string, fallbackVehicle = 'Vehicle 1'): (Tally & ({ points: GpsPoint[] } | { trips: Trip[]; repeats: number })) | null {
   let data: unknown
   try {
     data = JSON.parse(text)
@@ -454,7 +475,7 @@ export function parseGeotabJson(text: string, fallbackVehicle = 'Vehicle 1'): (T
   if ('start' in items[0] && 'stop' in items[0] && 'distance' in items[0]) {
     const stopOf = (o: GeoItem) => o.stopPoint as { x?: number; y?: number } | undefined
     const home = homeLngs(items.map((o) => [deviceName(o, fallbackVehicle), stopOf(o)?.y, stopOf(o)?.x]))
-    const trips: Trip[] = []
+    const all: Trip[] = []
     for (const o of items) {
       const sp = stopOf(o)
       const to: LatLng | undefined = sp && Number.isFinite(sp.x) && Number.isFinite(sp.y) ? [sp.y!, sp.x!] : undefined
@@ -465,8 +486,9 @@ export function parseGeotabJson(text: string, fallbackVehicle = 'Vehicle 1'): (T
       if (start === null || end === null || end <= start || !Number.isFinite(km) || km < 0) continue
       const hours = (end - start) / 3600e3
       const idleH = Math.min((parseDurationMin(typeof o.idlingDuration === 'string' ? o.idlingDuration : undefined) ?? 0) / 60, hours * 0.95)
-      trips.push({ vehicle: deviceName(o, fallbackVehicle), start, end, km, idleH, speedKm: bandKm(km, km / Math.max(hours - idleH, 0.01)), to })
+      all.push({ vehicle: deviceName(o, fallbackVehicle), start, end, km, idleH, speedKm: bandKm(km, km / Math.max(hours - idleH, 0.01)), to })
     }
+    const { trips, repeats } = dropRepeats(all)
     // A Geotab trip only carries where it stopped; it started where the previous one stopped.
     trips.sort((a, b) => a.start - b.start)
     const last = new Map<string, LatLng | undefined>()
@@ -474,7 +496,7 @@ export function parseGeotabJson(text: string, fallbackVehicle = 'Vehicle 1'): (T
       t.from = last.get(t.vehicle)
       last.set(t.vehicle, t.to)
     }
-    return { trips, total, bad: total - trips.length }
+    return { trips, repeats, total, bad: total - all.length }
   }
   return null
 }

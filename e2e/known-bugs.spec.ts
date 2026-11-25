@@ -215,9 +215,18 @@ test('the unmanaged peak ignores the site cap it is compared against', async ({ 
   await expect(page.locator('.kpi', { hasText: 'Peak depot load' })).toContainText('vs 23 kW')
 })
 
-test.fail('the same trip twice in a file is counted once', async ({ page }) => {
+test('the same trip twice in a file is counted once', async ({ page }) => {
   await importFleet(page, 't.csv', TRIP + 'Van 1,2026-01-05 08:00,2026-01-05 12:00,160,0\n')
   expect(await result(page, 'Van 1')).toMatchObject({ avg_day_km: '160' })
+  await expect(status(page)).toContainText('1 vehicles · 1 trips')
+  await expect(status(page)).toContainText('1 repeated trip left out')
+})
+
+test('the same MyGeotab trip twice is counted once', async ({ page }) => {
+  const t = { device: { id: 'Van 1' }, start: '2026-01-05T13:00:00Z', stop: '2026-01-05T17:00:00Z', distance: 160 }
+  await importFleet(page, 't.json', JSON.stringify([t, t, t]), false)
+  expect(await result(page, 'Van 1')).toMatchObject({ avg_day_km: '160' })
+  await expect(status(page)).toContainText('2 repeated trips left out')
 })
 
 test.describe('map', () => {
