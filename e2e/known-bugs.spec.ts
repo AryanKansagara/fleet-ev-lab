@@ -229,17 +229,51 @@ test.describe('climate profile', () => {
   })
 })
 
-test.fail('edits made after copying a settings link survive a reload', async ({ page, context }) => {
-  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
-  await openLab(page)
-  await openExport(page)
-  await page.getByRole('button', { name: 'Copy settings link' }).click()
-  await expect(page.getByText('It contains no GPS data.')).toBeVisible()
-  await tab(page, 'Charging')
-  await page.getByLabel(/^Required buffer/).fill('25')
-  await page.reload()
-  await tab(page, 'Charging')
-  await expect(page.getByLabel(/^Required buffer/)).toHaveValue('25')
+test.describe('edits made after a settings link', () => {
+  const buffer = async (page: Page, set?: string) => {
+    await tab(page, 'Charging')
+    if (set) await page.getByLabel(/^Required buffer/).fill(set)
+    return page.getByLabel(/^Required buffer/)
+  }
+  const copy = async (page: Page, says: string) => {
+    await openExport(page)
+    await page.getByRole('button', { name: 'Copy settings link' }).click()
+    await expect(page.getByText(says)).toBeVisible()
+  }
+  test('is copied survive a reload', async ({ page, context }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+    await openLab(page)
+    await copy(page, 'Settings link copied')
+    await buffer(page, '25')
+    await page.reload()
+    await expect(await buffer(page)).toHaveValue('25')
+  })
+  test('is opened survive a reload, and the link itself is applied', async ({ page, context }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+    await openLab(page)
+    await buffer(page, '30')
+    await copy(page, 'Settings link copied')
+    const url = await page.evaluate(() => navigator.clipboard.readText())
+    await buffer(page, '5')
+    await page.goto('/docs')
+    await openLab(page, url)
+    await expect(await buffer(page)).toHaveValue('30')
+    await expect(page).toHaveURL(/\/app$/)
+    await page.reload()
+    await expect(await buffer(page, '25')).toHaveValue('25')
+    await page.reload()
+    await expect(await buffer(page)).toHaveValue('25')
+  })
+  test('is shown in the address bar, because the clipboard was refused, survive a reload', async ({ page }) => {
+    await page.addInitScript(() => { navigator.clipboard.writeText = () => Promise.reject(new Error('refused')) })
+    await openLab(page)
+    await copy(page, 'The address bar now holds the settings link')
+    await expect(page).toHaveURL(/#s=.+/)
+    await buffer(page, '25')
+    await expect(page).toHaveURL(/\/app$/)
+    await page.reload()
+    await expect(await buffer(page)).toHaveValue('25')
+  })
 })
 
 // Two E-Transits at 11.3 kW each plugged in on arrival draw 22.6 kW, whatever cap the managed plan keeps to.
