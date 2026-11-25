@@ -294,6 +294,10 @@ export default function FleetMap({ fleet, result, day, selected, onSelect, heigh
         ro.observe(host.current)
         cleanup = () => {
           ro.disconnect()
+          // map.remove() leaves the zoom animation and mouse-wheel timers running, and either one throws once the map is gone.
+          const timers = map as unknown as { _animatingZoom: boolean; scrollWheelZoom: { _timer?: number } }
+          timers._animatingZoom = false
+          clearTimeout(timers.scrollWheelZoom._timer)
           map.remove()
           mapRef.current = null
         }
