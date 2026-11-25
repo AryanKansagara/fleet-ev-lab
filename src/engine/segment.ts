@@ -1,5 +1,5 @@
 import { guessClass } from './parse.ts'
-import type { Depot, Fleet, GpsPoint, LatLng, Trip, VClass, Vehicle } from './types.ts'
+import type { Depot, Fleet, GpsPoint, LatLng, Trip, VClass, Vehicle, VehicleEdits } from './types.ts'
 
 export const DAY_MS = 86400e3
 export const dayOf = (t: number) => Math.floor(t / DAY_MS)
@@ -225,6 +225,10 @@ export function assembleFleet(trips: Trip[], o: FleetBuildOptions): Fleet {
     rtbPct: rtb.get(id) ?? null,
   }))
   return { name: o.name, synthetic: !!o.synthetic, description: o.description, vehicles, trips, depots, stats: o.stats, notes: o.notes }
+}
+
+export function withEdits(f: Fleet, edits: VehicleEdits = {}): Fleet {
+  return f.vehicles.some((v) => Object.hasOwn(edits, v.id)) ? { ...f, vehicles: f.vehicles.map((v) => (Object.hasOwn(edits, v.id) ? { ...v, ...edits[v.id] } : v)) } : f
 }
 
 export function fleetFromPoints(points: GpsPoint[], o: FleetBuildOptions, seg: SegmentOptions = DEFAULT_SEGMENT): Fleet {

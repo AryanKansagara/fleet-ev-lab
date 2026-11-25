@@ -7,7 +7,7 @@ import { csvCell, resultsCsv } from './export.ts'
 import { bandKm, guessMapping, parseCsv, parseGpx, parseTime, rowsToPoints, rowsToTrips } from './parse.ts'
 import { buildSample, samplePointsCsv, type RouteFile } from './samples.ts'
 import { scheduleNight, type ChargeRequest } from './schedule.ts'
-import { assembleFleet, DAY_MS, DEFAULT_SEGMENT, filterPoints, fleetFromPoints, haversineKm, inferDepots, segmentTrips } from './segment.ts'
+import { assembleFleet, DAY_MS, DEFAULT_SEGMENT, filterPoints, fleetFromPoints, haversineKm, inferDepots, segmentTrips, withEdits } from './segment.ts'
 import { allModels, defaultCurve, defaultSettings, fittedRange, nearestClimate, PUBLISHED_ANCHORS } from './settings.ts'
 import { decodeSettings, encodeSettings, mergeSettings, shareable } from './share.ts'
 import { analyzeFleet, pickBest, planRollout } from './sim.ts'
@@ -413,4 +413,17 @@ test('fast sampling and same-time fixes are still driving', () => {
   assert.ok(Math.abs(t.km - 9) < 0.05, String(t.km))
   const a = (t: number, m: number): GpsPoint => ({ vehicle: 'A', t: T0 + t * 1000, lat: 43 + m / 111195, lng: -79.5 })
   assert.equal(segmentTrips([a(0, 0), a(60, 900), a(60, 1100), a(120, 2000)]).length, 1)
+})
+
+test('vehicle edits change only the vehicles they name and leave the loaded fleet as it was', () => {
+  const f = fleet([trip(), trip({ vehicle: 'B' })])
+  const e = withEdits(f, { B: { cls: 'pickup' }, gone: { loadKg: 1 } })
+  assert.deepEqual(e.vehicles.map((v) => [v.id, v.cls, v.loadKg]), [['A', 'van', 200], ['B', 'pickup', 200]])
+  assert.equal(f.vehicles[1].cls, 'van')
+  assert.equal(e.trips, f.trips)
+  assert.equal(withEdits(f, { gone: { loadKg: 1 } }), f)
+  // The results follow the edit, although the unedited fleet was analysed first.
+  const s = defaultSettings()
+  assert.equal(analyzeFleet(f, s, { mode: 'observed' }).vehicles[1].cls, 'van')
+  assert.equal(analyzeFleet(e, s, { mode: 'observed' }).vehicles[1].cls, 'pickup')
 })
