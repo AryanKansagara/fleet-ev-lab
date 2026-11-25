@@ -90,10 +90,10 @@ export async function exportCsv(page: Page, name: 'Results CSV' | 'Failure days 
   return download(page, page.getByRole('button', { name, exact: true }))
 }
 
-/** One vehicle's row of the results CSV as column name to cell. Cells in these tests contain no quotes. */
+/** One vehicle's row of the results CSV as column name to cell. */
 export async function result(page: Page, vehicle: string): Promise<Record<string, string>> {
   const [, csv] = await exportCsv(page, 'Results CSV')
-  const [head, ...rows] = csv.split('\n').map((l) => l.split(','))
+  const [head, ...rows] = csv.split('\n').map((l) => [...l.matchAll(/(?:^|,)(?:"((?:[^"]|"")*)"|([^,]*))/g)].map((m) => m[1]?.replace(/""/g, '"') ?? m[2]))
   const row = rows.find((r) => r[0] === vehicle)
   expect(row, `row for ${vehicle}`).toBeTruthy()
   return Object.fromEntries(head.map((h, i) => [h, row![i]]))
