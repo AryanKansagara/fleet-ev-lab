@@ -6,7 +6,7 @@ import { CATALOGUE_AS_OF, INCENTIVE_NOTES } from './engine/catalogue.ts'
 import { fetchLivePrices, STATCAN_TABLE, type LivePrices } from './engine/prices.ts'
 import { loadSample, samplePointsCsv, SAMPLES, type SampleId } from './engine/samples.ts'
 import { withEdits } from './engine/segment.ts'
-import { allModels, CLIMATES, candidateModels, defaultSettings, nearestClimate } from './engine/settings.ts'
+import { allModels, candidateModels, climateFor, defaultSettings } from './engine/settings.ts'
 import { decodeSettings, encodeSettings, mergeSettings, readFleet } from './engine/share.ts'
 import { analyzeFleet, middayUplift, planRollout, type TempMode } from './engine/sim.ts'
 import { REASON_LABEL, type Fleet, type Reason, type Settings, type VClass, type VehicleEdits, type VehicleResult } from './engine/types.ts'
@@ -109,6 +109,13 @@ export default function Tool() {
     return () => { cancelled = true }
   }, [sample, ownFleet])
 
+  // Also runs when settings arrive from a link or are reset, which may be after the fleet.
+  useEffect(() => {
+    if (!baseFleet) return
+    const climate = climateFor(settings.climate, baseFleet.depots)
+    if (climate !== settings.climate) setSettings((s) => (s.climate === settings.climate ? { ...s, climate } : s))
+  }, [baseFleet, settings.climate])
+
   // Weather upgrades the fleet in the background. The climate profile keeps the app working until then, and offline.
   useEffect(() => {
     if (!baseFleet) return
@@ -118,11 +125,6 @@ export default function Tool() {
     setAssignment({})
     setStress(null)
     setTemp({ mode: 'observed' })
-    const d = baseFleet.depots.find((x) => x.lat || x.lng)
-    if (d) {
-      const c = nearestClimate(d.lat, d.lng)
-      setSettings((s) => (CLIMATES.some((x) => x.name === s.climate.name) ? { ...s, climate: { name: c.name, monthly: c.monthly } } : s))
-    }
     setWeather({ state: 'loading' })
     const ac = new AbortController()
     applyWeather(baseFleet, ac.signal).then(

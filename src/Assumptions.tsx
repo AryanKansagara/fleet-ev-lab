@@ -52,8 +52,9 @@ export default function Assumptions({ settings: s, onChange, marker }: { setting
         <h3>Climate profile</h3>
         <p className="muted small">Used for annual energy costs, and for any trip with no archive temperature. Approximate 1991 to 2020 monthly means, rounded. Edit for your site.</p>
         <label className="field narrow"><span>Start from</span>
-          <select value={CLIMATES.some((c) => c.name === s.climate.name) ? s.climate.name : ''} onChange={(ev) => { const c = CLIMATES.find((x) => x.name === ev.target.value); if (c) onChange({ ...s, climate: { name: c.name, monthly: c.monthly } }) }}>
+          <select value={CLIMATES.some((c) => c.name === s.climate.name) ? s.climate.name : ''} onChange={(ev) => { const c = CLIMATES.find((x) => x.name === ev.target.value); onChange({ ...s, climate: c ? { name: c.name, monthly: c.monthly, chosen: true } : defaultSettings().climate }) }}>
             <option value="" disabled>Custom</option>
+            <option value="nearest">Nearest to the fleet</option>
             {CLIMATES.map((c) => <option key={c.name}>{c.name}</option>)}
           </select>
         </label>
