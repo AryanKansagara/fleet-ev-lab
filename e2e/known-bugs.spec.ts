@@ -91,25 +91,25 @@ test.describe('malformed settings', () => {
     const { deflateRawSync } = await import('node:zlib')
     return `/app#s=${deflateRawSync(JSON.stringify(settings)).toString('base64url')}`
   }
-  test.fail('a link with the wrong shapes does not break the lab, now or on the next visit', async ({ page }) => {
+  test('a link with the wrong shapes does not break the lab, now or on the next visit', async ({ page }) => {
     await page.goto(await link({ energy: { speedMult: null }, customModels: [null], tco: { years: 'x', currency: {} } }))
     await expect(status(page)).toBeVisible()
     await page.goto('/docs')
     await openLab(page)
     await expect(page.locator('.kpis')).not.toContainText('NaN')
   })
-  test.fail('text where the battery health number belongs does not pass every day', async ({ page }) => {
+  test('text where the battery health number belongs does not pass every day', async ({ page }) => {
     await importFleet(page, 't.csv', TRIP)
     await page.goto('/docs')
     await page.goto(await link({ energy: { batteryHealthPct: 'abc' } }))
     await setTemp(page, -35)
     await expect(kpi(page, 'Days completed')).toHaveText('0.0%')
   })
-  test.fail('an unreadable link says so', async ({ page }) => {
+  test('an unreadable link says so', async ({ page }) => {
     await page.goto('/app#s=not-a-link')
     await expect(page.getByText(/settings link could not be read/i)).toBeVisible()
   })
-  test.fail('a damaged saved fleet does not leave the lab loading for ever', async ({ page }) => {
+  test('a damaged saved fleet does not leave the lab loading for ever', async ({ page }) => {
     await page.addInitScript(() => localStorage.setItem('fel-fleet-v1', '{"name":"x","trips":[{'))
     await page.goto('/app')
     await expect(status(page)).toContainText('Synthetic sample data')
