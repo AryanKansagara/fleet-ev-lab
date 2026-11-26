@@ -265,6 +265,7 @@ export default function Tool() {
             <div className="status-line no-print">
               {fleet.synthetic ? <SyntheticTag /> : <span className="synthetic own">Your data, in this browser only</span>}
               <span>{fleet.vehicles.length} vehicles · {fleet.trips.length.toLocaleString('en-CA')} trips · {fmtDate(result.firstDay)} to {fmtDate(result.lastDay)}</span>
+              {fleet.notes?.length ? <span className="error">{fleet.notes.join(' · ')}</span> : null}
               <span>
                 {weather.state === 'loading' ? 'Fetching historical temperatures' : weather.state === 'archive' ? `Open-Meteo temperatures on ${weather.matched?.toLocaleString('en-CA')} of ${weather.total?.toLocaleString('en-CA')} trips` : `Weather archive unavailable: using the ${settings.climate.name} climate profile`}
                 {temp.mode === 'stress' && stress ? ` · Stress week: ${stress.source === 'archive' ? `from ${stress.start}, the coldest in five years` : 'estimated from the climate profile'}` : ''}
@@ -730,7 +731,7 @@ function Report({ fleet, settings, temp, result, tempLabel, reasons }: { fleet: 
   return (
     <article className="report" aria-hidden="true">
       <h1>Fleet EV Lab report</h1>
-      <p>{fleet.name}. {fleet.synthetic ? 'SYNTHETIC SAMPLE DATA, not real vehicles.' : 'Customer-supplied data, processed in the browser.'} Dated {new Date().toISOString().slice(0, 10)}. Results {tempLabel}.</p>
+      <p>{fleet.name}. {fleet.synthetic ? 'SYNTHETIC SAMPLE DATA, not real vehicles.' : 'Customer-supplied data, processed in the browser.'}{fleet.notes?.length ? ` ${fleet.notes.join('. ')}.` : ''} Dated {new Date().toISOString().slice(0, 10)}. Results {tempLabel}.</p>
       <p>{result.pct.toFixed(1)}% of {result.opDays.toLocaleString('en-CA')} vehicle-days completed. {result.readyCount} of {result.vehicles.length} vehicles ready. {result.chargers} chargers, {result.peakKw.toFixed(0)} kW peak. {money(result.savings, cur)} saved over {settings.tco.years} years, excluding holds. {result.co2Tonnes.toFixed(0)} t CO2 avoided a year.</p>
       {reasons.length ? <p>Failure days: {reasons.map(([r, n]) => `${REASON_LABEL[r]} ${n}`).join(', ')}.</p> : null}
       <table>

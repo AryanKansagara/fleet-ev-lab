@@ -1,6 +1,9 @@
 import type { GpsPoint, LatLng, Trip, VClass } from './types.ts'
 
-export function parseCsv(text: string): string[][] {
+export const parseCsv = (text: string): string[][] => readCsv(text).rows
+
+/** `openAt` is the row holding a quote that never closes, so everything after it ran together, or null. */
+export function readCsv(text: string): { rows: string[][]; openAt: number | null } {
   const clean = text.replace(/^﻿/, '')
   const firstLine = clean.slice(0, clean.indexOf('\n') + 1 || clean.length)
   const delims = [',', ';', '\t', '|']
@@ -9,6 +12,7 @@ export function parseCsv(text: string): string[][] {
   let row: string[] = []
   let f = ''
   let q = false
+  let at = 0
   for (let i = 0; i < clean.length; i++) {
     const c = clean[i]
     if (q) {
@@ -18,7 +22,11 @@ export function parseCsv(text: string): string[][] {
           i++
         } else q = false
       } else f += c
-    } else if (c === '"') q = true
+    } else if (c === '"' && !f.trim()) {
+      // Only a quote that starts a cell quotes it: in `Van 24" box` it is an inch mark.
+      q = true
+      at = rows.length + 1
+    }
     else if (c === d) {
       row.push(f)
       f = ''
@@ -34,7 +42,7 @@ export function parseCsv(text: string): string[][] {
     row.push(f)
     if (row.length > 1 || row[0].trim()) rows.push(row)
   }
-  return rows
+  return { rows, openAt: q ? at : null }
 }
 
 export type Field =
@@ -301,10 +309,19 @@ export function rowsToTrips(rows: string[][], map: ColumnMap, units: Units = DEF
 
 const GENERIC_TRACK = /^(active log|current track|track|untitled|\d{4}-\d{2}-\d{2}[ T][\d:]+.*|.*\b(ride|run|walk|drive|activity)\b.*)$/i
 
+/** A GPX file that starts but never ends was cut off while it was written or copied. */
+export const gpxCutOff = (xml: string) => /<(?:\w+:)?gpx[\s>]/i.test(xml) && !/<\/(?:\w+:)?gpx\s*>/i.test(xml)
+
+/** Counts what an importer met and could not use. */
+export interface Tally {
+  total: number
+  bad: number
+}
+
 /** Minimal GPX reader for tracks and routes. Each track name becomes a vehicle unless one is provided. */
-export function parseGpx(xml: string, fallbackVehicle = 'Vehicle 1'): GpsPoint[] {
+export function parseGpx(xml: string, fallbackVehicle = 'Vehicle 1', tally: Tally = { total: 0, bad: 0 }): GpsPoint[] {
   const found: (Omit<GpsPoint, 't'> & { time: string })[] = []
-  const tracks = xml.match(/<trk[\s>][\s\S]*?<\/trk>/g) ?? [xml]
+  const tracks = xml.match(/<trk[\s>][\s\S]*?(?:<\/trk>|$)/g) ?? [xml]
   for (const trk of tracks) {
     // Only the track's own name, before its first segment. Garmin and Strava name tracks by date or activity, which is not a vehicle.
     const own = trk.split(/<trkseg[\s>]/)[0].match(/<name>\s*(?:<!\[CDATA\[)?([^<\]]+)/)?.[1]?.trim()
@@ -313,7 +330,11 @@ export function parseGpx(xml: string, fallbackVehicle = 'Vehicle 1'): GpsPoint[]
       const lat = Number(m[1].match(/lat=["']([^"']+)/)?.[1])
       const lng = Number(m[1].match(/lon=["']([^"']+)/)?.[1])
       const body = m[2] ?? ''
-      if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue
+      tally.total++
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        tally.bad++
+        continue
+      }
       const speedMs = Number(body.match(/<(?:\w+:)?speed>([^<]+)/)?.[1])
       found.push({ vehicle: name, time: body.match(/<time>([^<]+)/)?.[1] ?? '', lat, lng, speedKph: Number.isFinite(speedMs) ? speedMs * 3.6 : undefined })
     }
@@ -321,7 +342,9 @@ export function parseGpx(xml: string, fallbackVehicle = 'Vehicle 1'): GpsPoint[]
   const home = homeLngs(found.map((p) => [p.vehicle, p.lat, p.lng]))
   return found.flatMap(({ time, ...p }) => {
     const t = parseTime(time, home.get(p.vehicle))
-    return t === null ? [] : [{ ...p, t }]
+    if (t !== null) return [{ ...p, t }]
+    tally.bad++
+    return []
   })
 }
 
@@ -332,6 +355,9 @@ export const guessClass = (id: string): VClass => {
   return 'van'
 }
 
+/** A number, or text that is one. Missing, null and blank values are not zero. */
+const geoNum = (v: unknown) => (typeof v === 'number' || (typeof v === 'string' && v.trim()) ? Number(v) : NaN)
+
 type GeoItem = Record<string, unknown> & { device?: { id?: string; name?: string } | string }
 const deviceName = (o: GeoItem, fallback: string) => (typeof o.device === 'string' ? o.device : o.device?.name ?? o.device?.id) ?? fallback
 
@@ -341,7 +367,7 @@ const deviceName = (o: GeoItem, fallback: string) => (typeof o.device === 'strin
  * "hh:mm:ss" span, stopPoint {x: lng, y: lat}). Device ids stand in for names unless a name is included.
  * Returns null when the JSON is neither.
  */
-export function parseGeotabJson(text: string, fallbackVehicle = 'Vehicle 1'): { points: GpsPoint[] } | { trips: Trip[] } | null {
+export function parseGeotabJson(text: string, fallbackVehicle = 'Vehicle 1'): (Tally & ({ points: GpsPoint[] } | { trips: Trip[] })) | null {
   let data: unknown
   try {
     data = JSON.parse(text)
@@ -351,20 +377,22 @@ export function parseGeotabJson(text: string, fallbackVehicle = 'Vehicle 1'): { 
   if (data && !Array.isArray(data) && typeof data === 'object') data = (data as { result?: unknown }).result
   if (!Array.isArray(data)) return null
   // Multicall results are an array of arrays.
-  const items = (data.every(Array.isArray) ? data.flat() : data).filter((o): o is GeoItem => !!o && typeof o === 'object')
+  const all: unknown[] = data.every(Array.isArray) ? data.flat() : data
+  const total = all.length
+  const items = all.filter((o): o is GeoItem => !!o && typeof o === 'object')
   if (!items.length) return null
   if ('latitude' in items[0] && 'dateTime' in items[0]) {
-    const home = homeLngs(items.map((o) => [deviceName(o, fallbackVehicle), Number(o.latitude), Number(o.longitude)]))
+    const home = homeLngs(items.map((o) => [deviceName(o, fallbackVehicle), geoNum(o.latitude), geoNum(o.longitude)]))
     const points: GpsPoint[] = []
     for (const o of items) {
-      const lat = Number(o.latitude)
-      const lng = Number(o.longitude)
+      const lat = geoNum(o.latitude)
+      const lng = geoNum(o.longitude)
       const t = parseTime(String(o.dateTime ?? ''), home.get(deviceName(o, fallbackVehicle)))
       if (!Number.isFinite(lat) || !Number.isFinite(lng) || t === null) continue
-      const speed = Number(o.speed)
+      const speed = geoNum(o.speed)
       points.push({ vehicle: deviceName(o, fallbackVehicle), t, lat, lng, speedKph: Number.isFinite(speed) && speed >= 0 ? speed : undefined })
     }
-    return { points }
+    return { points, total, bad: total - points.length }
   }
   if ('start' in items[0] && 'stop' in items[0] && 'distance' in items[0]) {
     const stopOf = (o: GeoItem) => o.stopPoint as { x?: number; y?: number } | undefined
@@ -376,7 +404,7 @@ export function parseGeotabJson(text: string, fallbackVehicle = 'Vehicle 1'): { 
       const lng = home.get(deviceName(o, fallbackVehicle))
       const start = parseTime(String(o.start ?? ''), lng)
       const end = parseTime(String(o.stop ?? ''), lng)
-      const km = Number(o.distance)
+      const km = geoNum(o.distance)
       if (start === null || end === null || end <= start || !Number.isFinite(km) || km < 0) continue
       const hours = (end - start) / 3600e3
       const idleH = Math.min((parseDurationMin(typeof o.idlingDuration === 'string' ? o.idlingDuration : undefined) ?? 0) / 60, hours * 0.95)
@@ -389,7 +417,7 @@ export function parseGeotabJson(text: string, fallbackVehicle = 'Vehicle 1'): { 
       t.from = last.get(t.vehicle)
       last.set(t.vehicle, t.to)
     }
-    return { trips }
+    return { trips, total, bad: total - trips.length }
   }
   return null
 }

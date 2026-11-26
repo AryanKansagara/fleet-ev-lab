@@ -67,20 +67,20 @@ test.describe('numbers and units', () => {
 })
 
 test.describe('data lost on import without a word', () => {
-  test.fail('unreadable rows are counted on the results', async ({ page }) => {
+  test('unreadable rows are counted on the results', async ({ page }) => {
     await importFleet(page, 't.csv', trips('vehicle,start,end,distance', 'Van 1,2026-01-05 08:00,2026-01-05 10:00,50', 'Van 1,2026-01-06 08:00,late,50', 'Van 1,2026-01-07 08:00,2026-01-07 10:00'))
     await expect(status(page)).toContainText('2 of 3 rows could not be read')
   })
-  test.fail('a truncated GPX file says it is incomplete', async ({ page }) => {
+  test('a truncated GPX file says it is incomplete', async ({ page }) => {
     const whole = gpx(north())
     await upload(page, [{ name: 'x.gpx', data: whole.slice(0, Math.floor(whole.length / 2)) }])
     await expect(page.locator('.import')).toContainText('cut off')
   })
-  test.fail('several CSV files are refused, not cut to the first', async ({ page }) => {
+  test('several CSV files are refused, not cut to the first', async ({ page }) => {
     await upload(page, [{ name: 'a.csv', data: TRIP }, { name: 'b.csv', data: TRIP.replace('Van 1', 'Van 2') }])
     await expect(alert(page)).toContainText('one CSV or JSON file at a time')
   })
-  test.fail('a stray inch mark does not swallow the rest of the file', async ({ page }) => {
+  test('a stray inch mark does not swallow the rest of the file', async ({ page }) => {
     await importFleet(page, 't.csv', trips('vehicle,start,end,distance', 'Van 24" box,2026-01-05 08:00,2026-01-05 10:00,50', 'Van 2,2026-01-05 08:00,2026-01-05 10:00,50'))
     await expect(status(page)).toContainText('2 vehicles · 2 trips')
   })

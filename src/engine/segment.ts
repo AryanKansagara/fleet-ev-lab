@@ -204,6 +204,7 @@ export interface FleetBuildOptions {
   classes?: Record<string, VClass>
   loads?: Record<string, number>
   stats?: Fleet['stats']
+  notes?: string[]
 }
 
 export function assembleFleet(trips: Trip[], o: FleetBuildOptions): Fleet {
@@ -216,7 +217,7 @@ export function assembleFleet(trips: Trip[], o: FleetBuildOptions): Fleet {
     depot: home.get(id)!,
     rtbPct: rtb.get(id) ?? null,
   }))
-  return { name: o.name, synthetic: !!o.synthetic, description: o.description, vehicles, trips, depots, stats: o.stats }
+  return { name: o.name, synthetic: !!o.synthetic, description: o.description, vehicles, trips, depots, stats: o.stats, notes: o.notes }
 }
 
 export function fleetFromPoints(points: GpsPoint[], o: FleetBuildOptions, seg: SegmentOptions = DEFAULT_SEGMENT): Fleet {

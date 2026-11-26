@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { CATALOGUE } from './catalogue.ts'
 import { tripKwh } from './energy.ts'
-import { guessHeaderless, guessMapping, parseCsv, parseDurationMin, parseGeotabJson, parseGpx, rowsToPoints, rowsToTrips } from './parse.ts'
+import { gpxCutOff, guessHeaderless, guessMapping, parseCsv, parseDurationMin, parseGeotabJson, parseGpx, readCsv, rowsToPoints, rowsToTrips } from './parse.ts'
 import { nearestFuelCity, parseBoc, parseStatcan } from './prices.ts'
 import { assembleFleet, fleetFromPoints } from './segment.ts'
 import { defaultSettings } from './settings.ts'
@@ -184,4 +184,33 @@ test('trips: both ends use the vehicle clock, with one, both or no coordinates, 
   // A bad first fix does not set the zone.
   const rows = parseCsv('vehicle,timestamp,lat,lng\nA,2026-01-05T13:00:00Z,0,0\nA,2026-01-05T13:01:00Z,43,-79\nA,2026-01-05T13:02:00Z,43,-79')
   assert.equal(new Date(rowsToPoints(rows.slice(1), guessMapping(rows[0]).map).points[1].t).getUTCHours(), 8)
+})
+
+test('CSV quotes: an inch mark is text, a quote that never closes is reported', () => {
+  assert.deepEqual(readCsv('v,d\nVan 24" box,1\n"a ""b"", c", "x y"\n'), { rows: [['v', 'd'], ['Van 24" box', '1'], ['a "b", c', ' x y']], openAt: null })
+  assert.equal(readCsv('v,d\nA,1\n"B,2\nC,3').openAt, 3)
+  assert.equal(readCsv('"v","d"\n"A","1"').openAt, null)
+})
+
+test('GPX: a cut-off file is recognised, its last track is kept, unusable points are counted', () => {
+  const pt = '<trkpt lat="43" lon="-79"><time>2026-01-05T13:00:00Z</time></trkpt>'
+  const whole = `<gpx><trk><name>A</name>${pt}</trk><trk><name>B</name>${pt}<trkpt lat="43" lon="-79"/><trkpt lat="x" lon="-79"/></trk></gpx>`
+  assert.equal(gpxCutOff(whole), false)
+  const tally = { total: 0, bad: 0 }
+  assert.equal(parseGpx(whole, 'f', tally).length, 2)
+  assert.deepEqual(tally, { total: 4, bad: 2 })
+  const cut = whole.slice(0, whole.indexOf('<trkpt lat="43" lon="-79"/>'))
+  assert.equal(gpxCutOff(cut), true)
+  assert.deepEqual(parseGpx(cut).map((p) => p.vehicle), ['A', 'B'])
+})
+
+test('MyGeotab JSON: unusable records are counted and a null distance or coordinate is not zero', () => {
+  const t = { device: { id: 'A' }, start: '2026-01-05T13:00:00Z', stop: '2026-01-05T14:00:00Z', distance: 30 }
+  const trips = parseGeotabJson(JSON.stringify([t, { ...t, distance: null }, { ...t, stop: 'x' }, null]))
+  assert.ok(trips && 'trips' in trips)
+  assert.deepEqual([trips.trips.length, trips.bad, trips.total], [1, 3, 4])
+  const p = { dateTime: '2026-01-05T13:00:00Z', latitude: 43, longitude: -79, speed: null }
+  const points = parseGeotabJson(JSON.stringify([p, { ...p, latitude: null }, { ...p, longitude: '' }]))
+  assert.ok(points && 'points' in points)
+  assert.deepEqual([points.points.length, points.bad, points.points[0].speedKph], [1, 2, undefined])
 })
