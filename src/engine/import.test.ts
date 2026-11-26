@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { CATALOGUE } from './catalogue.ts'
 import { tripKwh } from './energy.ts'
-import { gpxCutOff, guessHeaderless, guessMapping, parseCsv, parseDurationMin, parseGeotabJson, parseGpx, readCsv, rowsToPoints, rowsToTrips } from './parse.ts'
+import { gpxCutOff, guessHeaderless, guessMapping, isDayFirst, parseCsv, parseDurationMin, parseGeotabJson, parseGpx, parseTime, readCsv, rowsToPoints, rowsToTrips } from './parse.ts'
 import { nearestFuelCity, parseBoc, parseStatcan } from './prices.ts'
 import { assembleFleet, fleetFromPoints } from './segment.ts'
 import { defaultSettings } from './settings.ts'
@@ -213,4 +213,29 @@ test('MyGeotab JSON: unusable records are counted and a null distance or coordin
   const points = parseGeotabJson(JSON.stringify([p, { ...p, latitude: null }, { ...p, longitude: '' }]))
   assert.ok(points && 'points' in points)
   assert.deepEqual([points.points.length, points.bad, points.points[0].speedKph], [1, 2, undefined])
+})
+
+test('day-first or month-first is decided once per file', () => {
+  const days = (...stamps: string[]) => {
+    const rows = stamps.map((s) => ['A', `${s} 08:00`, `${s} 10:00`, '50'])
+    const { trips, bad } = rowsToTrips(rows, { vehicle: 0, start: 1, end: 2, distance: 3 })
+    return [...trips.map((t) => new Date(t.start).toISOString().slice(0, 10)), bad]
+  }
+  assert.deepEqual(days('05/11/2025', '13/11/2025'), ['2025-11-05', '2025-11-13', 0])
+  assert.deepEqual(days('05/11/2025', '05/13/2025'), ['2025-05-11', '2025-05-13', 0])
+  assert.deepEqual(days('05/11/2025', '06/11/2025'), ['2025-05-11', '2025-06-11', 0])
+  // Both orders in one file: the more common one wins, and the rest are unreadable rather than swapped.
+  assert.deepEqual(days('05/11/2025', '13/11/2025', '14/11/2025', '11/15/2025'), ['2025-11-05', '2025-11-13', '2025-11-14', 1])
+  assert.equal(isDayFirst(['2025-11-13', undefined, '31/31/2025', '']), false)
+  assert.equal(rowsToPoints([['13/11/2025 08:00', '43', '-79'], ['05/11/2025 08:00', '43', '-79']], { timestamp: 0, lat: 1, lng: 2 }).points[1].t, Date.UTC(2025, 10, 5, 8))
+})
+
+test('dates and times that do not exist are unreadable', () => {
+  for (const s of ['2026-02-30 08:00', '2026-13-01', '0000-00-00 00:00:00', '2026-01-05 25:00', '2026-01-05 08:61', '31/31/2026', '02/30/2026', '31-Feb-2026', '0', '1/5/2026 13:00 AM x']) assert.equal(parseTime(s), null, s)
+  assert.equal(parseTime('2024-02-29'), Date.UTC(2024, 1, 29))
+  assert.equal(parseTime('29 Feb 2024 23:59:59'), Date.UTC(2024, 1, 29, 23, 59, 59))
+  assert.equal(parseTime('2025-02-29'), null)
+  // ISO 8601 midnight at the end of a day.
+  assert.equal(parseTime('2026-01-05T24:00'), Date.UTC(2026, 0, 6))
+  assert.equal(parseTime('2026-01-05T24:01'), null)
 })

@@ -25,11 +25,11 @@ test.describe('clock changes at a 15-degree longitude line', () => {
 
 test.describe('dates', () => {
   // 13/11 can only be day-first, so 05/11 in the same file is 5 November.
-  test.fail('a day-first file is read day-first throughout', async ({ page }) => {
+  test('a day-first file is read day-first throughout', async ({ page }) => {
     await importFleet(page, 't.csv', trips('vehicle,start,end,distance', ...['05', '13'].map((d) => `Van 1,${d}/11/2025 08:00,${d}/11/2025 10:00,50`)))
     await expect(status(page)).toContainText(/Nov\.? 5, 2025 to Nov\.? 13, 2025/)
   })
-  test.fail('dates that do not exist are not turned into other days', async ({ page }) => {
+  test('dates that do not exist are not turned into other days', async ({ page }) => {
     await importFleet(page, 't.csv', trips('vehicle,start,end,distance', 'Van 1,2026-01-05 08:00,2026-01-05 10:00,50', 'Van 1,2026-02-30 08:00,2026-02-30 10:00,50'))
     await expect(status(page)).toContainText('1 vehicles · 1 trips')
   })
