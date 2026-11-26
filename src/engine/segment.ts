@@ -103,6 +103,13 @@ export function segmentTrips(points: GpsPoint[], opts: SegmentOptions = DEFAULT_
     }
     const stationaryMs = prev.t - anchor.t
     const silentMs = p.t - prev.t
+    // Faster than any jump limit means it was moved, not driven: a tow, a ferry, a unit put in another vehicle. Same-time fixes may be up to a minute apart.
+    if (haversineKm(prev.lat, prev.lng, p.lat, p.lng) / (Math.max(silentMs || 60e3, 1000) / 3600e3) > opts.maxKph) {
+      close()
+      anchor = p
+      prev = p
+      continue
+    }
     const legKph = silentMs > 0 ? d / (silentMs / 3600e3) : 0
     // Silent gap: implausibly slow means it parked and moved on, otherwise it is a telemetry dropout mid-trip.
     const silentStop = silentMs >= stopMs && legKph < 15
@@ -204,6 +211,7 @@ export interface FleetBuildOptions {
   classes?: Record<string, VClass>
   loads?: Record<string, number>
   stats?: Fleet['stats']
+  notes?: string[]
 }
 
 export function assembleFleet(trips: Trip[], o: FleetBuildOptions): Fleet {
@@ -216,7 +224,7 @@ export function assembleFleet(trips: Trip[], o: FleetBuildOptions): Fleet {
     depot: home.get(id)!,
     rtbPct: rtb.get(id) ?? null,
   }))
-  return { name: o.name, synthetic: !!o.synthetic, description: o.description, vehicles, trips, depots, stats: o.stats }
+  return { name: o.name, synthetic: !!o.synthetic, description: o.description, vehicles, trips, depots, stats: o.stats, notes: o.notes }
 }
 
 export function fleetFromPoints(points: GpsPoint[], o: FleetBuildOptions, seg: SegmentOptions = DEFAULT_SEGMENT): Fleet {

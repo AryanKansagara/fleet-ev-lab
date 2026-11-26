@@ -393,3 +393,24 @@ test('end to end: sample exported as GPS CSV imports back through parsing and se
   assert.ok(r.opDays > 40)
   assert.ok(bandKm(10, 95)[3] === 10)
 })
+
+test('a relocation is not driving: the trip ends there and the moved vehicle starts a new one', () => {
+  const at = (i: number, jump: number): GpsPoint => ({ vehicle: 'A', t: T0 + i * 60e3, lat: 43 + i * 0.005 + (i > 15 ? jump : 0), lng: -79.5 })
+  const build = (jump: number) => fleetFromPoints(Array.from({ length: 31 }, (_, i) => at(i, jump)), { name: 'x' })
+  // 15 steps, then 14 steps, of 6371 x pi/180 x 0.005 = 0.55597 km.
+  const moved = build(4.5).trips
+  assert.deepEqual(moved.map((t) => +t.km.toFixed(2)), [8.34, 7.78])
+  assert.equal(build(4.5).stats!.droppedJumps, 0)
+  // No jump: one trip of 30 steps.
+  assert.deepEqual(build(0).trips.map((t) => +t.km.toFixed(2)), [16.68])
+})
+
+test('fast sampling and same-time fixes are still driving', () => {
+  // 1 Hz at 30 m/s (108 km/h): each 30 m step is under the 40 m noise radius, so legs are summed two at a time.
+  const fast = Array.from({ length: 301 }, (_, i): GpsPoint => ({ vehicle: 'A', t: T0 + i * 1000, lat: 43 + (i * 30) / 111195, lng: -79.5 }))
+  const [t, ...rest] = fleetFromPoints(fast, { name: 'x' }).trips
+  assert.equal(rest.length, 0)
+  assert.ok(Math.abs(t.km - 9) < 0.05, String(t.km))
+  const a = (t: number, m: number): GpsPoint => ({ vehicle: 'A', t: T0 + t * 1000, lat: 43 + m / 111195, lng: -79.5 })
+  assert.equal(segmentTrips([a(0, 0), a(60, 900), a(60, 1100), a(120, 2000)]).length, 1)
+})
