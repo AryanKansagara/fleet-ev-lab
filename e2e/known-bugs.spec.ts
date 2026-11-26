@@ -206,7 +206,7 @@ test.fail('edits made after copying a settings link survive a reload', async ({ 
 })
 
 // Two E-Transits at 11.3 kW each plugged in on arrival draw 22.6 kW, whatever cap the managed plan keeps to.
-test.fail('the unmanaged peak ignores the site cap it is compared against', async ({ page }) => {
+test('the unmanaged peak ignores the site cap it is compared against', async ({ page }) => {
   await importFleet(page, 't.csv', TRIP + 'Van 2,2026-01-05 08:00,2026-01-05 12:00,160,0\n')
   await tab(page, 'Vehicles')
   for (const v of ['Van 1', 'Van 2']) await page.getByLabel(`${v} EV model`).selectOption({ label: 'Ford E-Transit 350' })
