@@ -103,10 +103,14 @@ export function guessMapping(header: string[]): { kind: 'points' | 'trips'; map:
 export function unitsFromHeader(cols: string[], map: ColumnMap): Units {
   const h = (f: Field) => (map[f] === undefined ? '' : cols[map[f]!])
   const speed = h('speed')
+  // Point files only use distance for the odometer.
+  const points = map.lat !== undefined && map.lng !== undefined && map.timestamp !== undefined
+  // GPSLogger for Android writes plain "speed" in m/s.
+  const gpsLogger = speed === 'speed' && ['elevation', 'accuracy', 'bearing', 'satellites', 'provider'].every((c) => cols.includes(c))
   const idle = h('idle')
   return {
-    distance: /\b(mi|miles?)\b/.test(h('distance')) ? 'mi' : 'km',
-    speed: /mph/.test(speed) ? 'mph' : /m\/s/.test(speed) ? 'mps' : 'kph',
+    distance: /\b(mi|miles?)\b/.test(h(points ? 'odometer' : 'distance')) ? 'mi' : 'km',
+    speed: /mph/.test(speed) ? 'mph' : /m\/s/.test(speed) || gpsLogger ? 'mps' : 'kph',
     load: /\b(lb|lbs)\b/.test(h('load')) ? 'lb' : 'kg',
     idle: /ticks/.test(idle) ? 'ticks' : /\b(s|sec|secs|seconds)\b/.test(idle) ? 's' : 'min',
   }
@@ -203,14 +207,43 @@ function offsetMs(z: string): number {
   return sign * (+d.slice(0, 2) * 60 + +(d.slice(2, 4) || 0)) * 60e3
 }
 
-const num = (s: string | undefined) => {
-  if (s === undefined || s.trim() === '') return undefined
-  let t = s.trim()
-  // Decimal comma, as GPSLogger and European exports write it: "43,6532" or "1.234,5". A lone ",ddd" is a thousands separator.
-  if (/^[+-]?\d+,\d+$/.test(t) && !/^[+-]?\d{1,3},\d{3}$/.test(t)) t = t.replace(',', '.')
-  else if (/^[+-]?\d{1,3}(\.\d{3})+,\d+$/.test(t)) t = t.replace(/\./g, '').replace(',', '.')
-  const n = Number(t.replace(/[^0-9.eE+-]/g, ''))
+/**
+ * A number, with at most a short unit or currency around it. Text without digits, and text with stray digits such as
+ * "5-6" or "0x10", is not a number.
+ */
+const num = (s: string | undefined, decimalComma = false) => {
+  // Spaces group thousands in much of Europe and in Canadian French ("1 234,5"), apostrophes in Switzerland.
+  const t = (s ?? '').trim().replace(/−/g, '-').replace(/^([+-]?\d{1,3})((?:[   '’]\d{3})+)(?!\d)/, (_, a: string, b: string) => a + b.replace(/\D/g, ''))
+  const m = t.match(/^([+-]?)[^\d.,+-]{0,12}([+-]?)([\d.,]*\d[\d.,]*(?:e[+-]?\d+)?)[^\d]*$/i)
+  if (!m) return undefined
+  let d = m[3]
+  // Decimal comma, as GPSLogger and European exports write it: "43,6532" or "1.234,5". A lone ",ddd" is a thousands separator unless the file uses decimal commas.
+  if (/^\d+,\d+$/.test(d) && (decimalComma || !/^\d{1,3},\d{3}$/.test(d))) d = d.replace(',', '.')
+  else if (/^\d{1,3}(\.\d{3})+,\d+$/.test(d)) d = d.replace(/\./g, '').replace(',', '.')
+  const n = Number(m[1] + m[2] + d.replace(/,/g, ''))
   return Number.isFinite(n) ? n : undefined
+}
+const notNegative = (n: number | undefined) => (n !== undefined && n >= 0 ? n : undefined)
+
+/** Coordinates never carry a thousands separator, so any comma is a decimal comma. A trailing or leading S or W is negative. */
+const coord = (s: string | undefined) => {
+  const n = num(s?.replace(',', '.'))
+  return n !== undefined && n > 0 && /^\s*[sw](?![a-z])|[\d\s°][sw]\s*$/i.test(s!) ? -n : n
+}
+
+/** True when the file's numbers show a decimal comma ("7,5") and none shows a decimal point ("7.5" or "1,234.5"). */
+function usesDecimalComma(rows: string[][], map: ColumnMap): boolean {
+  let comma = false
+  for (const [f, i] of Object.entries(map) as [Field, number | undefined][]) {
+    if (i === undefined || f === 'vehicle' || f === 'timestamp' || f === 'start' || f === 'end') continue
+    const isCoord = /lat|lng/i.test(f)
+    for (const r of rows) {
+      const t = r[i]?.trim() ?? ''
+      if (/^[+-]?[\d,]*\.(\d{1,2}|\d{4,})$/.test(t) || /^[+-]?\d{1,3}(,\d{3})+\.\d+$/.test(t)) return false
+      if (/^[+-]?\d+,(\d{1,2}|\d{4,})$/.test(t) || /^[+-]?\d{1,3}(?:[.   ]\d{3})+,\d+$/.test(t) || (isCoord && /^[+-]?\d+,\d+$/.test(t))) comma = true
+    }
+  }
+  return comma
 }
 
 /**
@@ -228,16 +261,13 @@ function homeLngs(at: Iterable<[vehicle: string, lat: number | undefined, lng: n
   return new Map([...all].map(([v, list]) => [v, list.sort((a, b) => a - b)[list.length >> 1]]))
 }
 
-/** Coordinates never carry a thousands separator, so any comma is a decimal comma. */
-const coord = (s: string | undefined) => num(s?.replace(',', '.'))
-
 /** Duration in minutes from a plain number in the given unit, or a "[d.]hh:mm[:ss[.fffffff]]" span as MyGeotab and .NET write it. */
-export function parseDurationMin(s: string | undefined, unit: Units['idle'] = 'min'): number | undefined {
+export function parseDurationMin(s: string | undefined, unit: Units['idle'] = 'min', decimalComma = false): number | undefined {
   const t = s?.trim()
   if (!t) return undefined
-  const m = t.match(/^(?:(\d+)\.)?(\d{1,2}):(\d{2})(?::(\d{2}(?:\.\d+)?))?$/)
+  const m = t.match(/^(?:(\d+)\.)?(\d{1,4}):(\d{2})(?::(\d{2}(?:\.\d+)?))?$/)
   if (m) return +(m[1] ?? 0) * 1440 + +m[2] * 60 + +m[3] + +(m[4] ?? 0) / 60
-  const n = num(t)
+  const n = num(t, decimalComma)
   if (n === undefined) return undefined
   return unit === 's' ? n / 60 : unit === 'ticks' ? n / 6e8 : n
 }
@@ -258,6 +288,7 @@ export function rowsToPoints(rows: string[][], map: ColumnMap, units: Units = DE
   const sk = SPEED_K[units.speed] ?? 1
   const lk = units.load === 'lb' ? 0.453592 : 1
   const vehicleOf = (r: string[]) => r[map.vehicle ?? -1]?.trim() || fallbackVehicle
+  const comma = usesDecimalComma(rows, map)
   const home = homeLngs(rows.map((r) => [vehicleOf(r), coord(r[map.lat ?? -1]), coord(r[map.lng ?? -1])]))
   const dayFirst = isDayFirst(rows.map((r) => r[map.timestamp ?? -1]))
   for (const r of rows) {
@@ -269,9 +300,9 @@ export function rowsToPoints(rows: string[][], map: ColumnMap, units: Units = DE
       bad++
       continue
     }
-    const speed = num(r[map.speed ?? -1])
-    const odo = num(r[map.odometer ?? -1])
-    const load = num(r[map.load ?? -1])
+    const speed = notNegative(num(r[map.speed ?? -1], comma))
+    const odo = notNegative(num(r[map.odometer ?? -1], comma))
+    const load = notNegative(num(r[map.load ?? -1], comma))
     points.push({
       vehicle,
       t,
@@ -297,6 +328,7 @@ export function rowsToTrips(rows: string[][], map: ColumnMap, units: Units = DEF
   const dk = units.distance === 'mi' ? 1.60934 : 1
   const lk = units.load === 'lb' ? 0.453592 : 1
   const vehicleOf = (r: string[]) => r[map.vehicle ?? -1]?.trim() || fallbackVehicle
+  const comma = usesDecimalComma(rows, map)
   const home = homeLngs(rows.flatMap((r) => (['start', 'end'] as const).map((e): [string, number | undefined, number | undefined] => [vehicleOf(r), coord(r[map[`${e}Lat`] ?? -1]), coord(r[map[`${e}Lng`] ?? -1])])))
   const dayFirst = isDayFirst(rows.flatMap((r) => [r[map.start ?? -1], r[map.end ?? -1]]))
   for (const r of rows) {
@@ -305,16 +337,16 @@ export function rowsToTrips(rows: string[][], map: ColumnMap, units: Units = DEF
     const endLng = coord(r[map.endLng ?? -1])
     const start = parseTime(r[map.start ?? -1] ?? '', home.get(vehicle), dayFirst)
     const end = parseTime(r[map.end ?? -1] ?? '', home.get(vehicle), dayFirst)
-    const dist = num(r[map.distance ?? -1])
+    const dist = num(r[map.distance ?? -1], comma)
     if (start === null || end === null || dist === undefined || end <= start || dist < 0) {
       bad++
       continue
     }
     const km = dist * dk
-    const idleMin = parseDurationMin(r[map.idle ?? -1], units.idle) ?? 0
+    const idleMin = notNegative(parseDurationMin(r[map.idle ?? -1], units.idle, comma)) ?? 0
     const hours = (end - start) / 3600e3
     const idleH = Math.min(idleMin / 60, hours * 0.95)
-    const load = num(r[map.load ?? -1])
+    const load = notNegative(num(r[map.load ?? -1], comma))
     const startLat = coord(r[map.startLat ?? -1])
     const endLat = coord(r[map.endLat ?? -1])
     trips.push({
