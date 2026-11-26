@@ -1,5 +1,6 @@
 // Each test states the correct behaviour of a reported bug. test.fail flips to a plain test in the PR that fixes it.
-import { test, expect as slow, importFleet, upload, alert, status, result, tab, kpi, openLab, openExport, setTemp, pointsCsv, gpx, north, track, TRIP } from './fixtures.ts'
+import type { Page } from '@playwright/test'
+import { test, expect as slow, importFleet, analyse, fleetPick, upload, alert, status, result, tab, kpi, openLab, openExport, setTemp, pointsCsv, gpx, north, track, TRIP } from './fixtures.ts'
 
 const expect = slow.configure({ timeout: 20_000 })
 
@@ -116,15 +117,70 @@ test.describe('malformed settings', () => {
   })
 })
 
-test.fail('changing two vehicles keeps both changes after a reload', async ({ page }) => {
-  await importFleet(page, 't.csv', TRIP + 'Van 2,2026-01-05 08:00,2026-01-05 12:00,160,0\n')
-  await tab(page, 'Vehicles')
-  await page.getByLabel('Van 1 class').selectOption('car')
-  await page.getByLabel('Van 2 class').selectOption('pickup')
-  await page.reload()
-  await tab(page, 'Vehicles')
-  await expect(page.getByLabel('Van 2 class')).toHaveValue('pickup')
-  await expect(page.getByLabel('Van 1 class')).toHaveValue('car')
+test.describe('vehicle edits', () => {
+  const edit = async (page: Page) => {
+    await tab(page, 'Vehicles')
+    await page.getByLabel('Van 1 class').selectOption('car')
+    await page.getByLabel('Van 2 class').selectOption('pickup')
+    await page.getByRole('button', { name: 'Van 2', exact: true }).click()
+    await page.getByLabel(/^Default load/).fill('450')
+  }
+  const kept = async (page: Page) => {
+    await tab(page, 'Vehicles')
+    await expect(page.getByLabel('Van 2 class')).toHaveValue('pickup')
+    await expect(page.getByLabel('Van 1 class')).toHaveValue('car')
+    if (!(await page.getByLabel(/^Default load/).count())) await page.getByRole('button', { name: 'Van 2', exact: true }).click()
+    await expect(page.getByLabel(/^Default load/)).toHaveValue('450')
+  }
+  const TWO = TRIP + 'Van 2,2026-01-05 08:00,2026-01-05 12:00,160,0\n'
+
+  test('changing two vehicles keeps both changes after a reload', async ({ page }) => {
+    await importFleet(page, 't.csv', TWO)
+    await edit(page)
+    await page.reload()
+    await kept(page)
+  })
+  test('a sample and back keeps the changes, and the sample keeps its own', async ({ page }) => {
+    await importFleet(page, 't.csv', TWO)
+    await edit(page)
+    await fleetPick(page).selectOption('mixed')
+    await expect(status(page)).toContainText('10 vehicles')
+    const first = page.locator('#panel select[aria-label$=" class"]').first()
+    await first.selectOption('car')
+    await fleetPick(page).selectOption('own')
+    await expect(status(page)).toContainText('2 vehicles')
+    await kept(page)
+    await fleetPick(page).selectOption('mixed')
+    await expect(status(page)).toContainText('10 vehicles')
+    await expect(first).toHaveValue('car')
+  })
+  test('weather that arrives after an edit does not undo it', async ({ page }) => {
+    let arrive = () => {}
+    const held = new Promise<void>((ok) => { arrive = ok })
+    await page.route('https://archive-api.open-meteo.com/**', async (route) => {
+      if (!route.request().url().includes('start_date=2026-01-05')) return route.abort('blockedbyclient')
+      await held
+      const time = Array.from({ length: 24 }, (_, h) => `2026-01-05T${String(h).padStart(2, '0')}:00`)
+      return route.fulfill({ json: { hourly: { time, temperature_2m: time.map(() => -15) } }, headers: { 'access-control-allow-origin': '*' } })
+    })
+    const head = 'vehicle,start,end,distance,load,start lat,start lng,end lat,end lng\n'
+    await importFleet(page, 't.csv', head + ['Van 1', 'Van 2'].map((v) => `${v},2026-01-05 08:00,2026-01-05 12:00,160,,43.7,-79.6,43.7,-79.6\n`).join(''))
+    await edit(page)
+    await expect(status(page)).toContainText('Fetching historical temperatures')
+    arrive()
+    await expect(status(page)).toContainText('Open-Meteo temperatures on 2 of 2 trips')
+    await kept(page)
+  })
+  test('a new import starts without the changes made to the last one', async ({ page }) => {
+    await importFleet(page, 't.csv', TWO)
+    await edit(page)
+    await tab(page, 'Your data')
+    await page.locator('input[type=file]').setInputFiles({ name: 'u.csv', mimeType: 'text/plain', buffer: Buffer.from(TWO.replace(/,0\n/g, ',\n')) })
+    await analyse(page)
+    await tab(page, 'Vehicles')
+    await expect(page.getByLabel('Van 1 class')).toHaveValue('van')
+    await expect(page.getByLabel('Van 2 class')).toHaveValue('van')
+  })
 })
 
 test.fail('a climate profile picked by the user survives a reload', async ({ page }) => {

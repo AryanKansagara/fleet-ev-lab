@@ -54,11 +54,6 @@ function indexFleet(f: Fleet): FleetIndex {
   return out
 }
 
-/** The vehicle's duty changes when a user edits its class or load, so the cache must be dropped. */
-export function invalidateFleet(f: Fleet) {
-  indexCache.delete(f)
-}
-
 interface DayRun {
   endKwh: number
   minKwh: number

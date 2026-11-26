@@ -5,10 +5,11 @@ import { dateOf, failuresCsv, resultsCsv } from './engine/export.ts'
 import { CATALOGUE_AS_OF, INCENTIVE_NOTES } from './engine/catalogue.ts'
 import { fetchLivePrices, STATCAN_TABLE, type LivePrices } from './engine/prices.ts'
 import { loadSample, samplePointsCsv, SAMPLES, type SampleId } from './engine/samples.ts'
+import { withEdits } from './engine/segment.ts'
 import { allModels, CLIMATES, candidateModels, defaultSettings, nearestClimate } from './engine/settings.ts'
 import { decodeSettings, encodeSettings, mergeSettings, readFleet } from './engine/share.ts'
-import { analyzeFleet, invalidateFleet, middayUplift, planRollout, type TempMode } from './engine/sim.ts'
-import { REASON_LABEL, type Fleet, type Reason, type Settings, type VClass, type VehicleResult } from './engine/types.ts'
+import { analyzeFleet, middayUplift, planRollout, type TempMode } from './engine/sim.ts'
+import { REASON_LABEL, type Fleet, type Reason, type Settings, type VClass, type VehicleEdits, type VehicleResult } from './engine/types.ts'
 import { applyWeather, climateStressWeek, fetchColdestWeek, type StressWeek } from './engine/weather.ts'
 import Import from './Import.tsx'
 import { downloadText, Footer, fmtDate, fmtT, Header, money, NumField, socColor, SyntheticTag, VerdictChip } from './ui.tsx'
@@ -70,7 +71,10 @@ export default function Tool() {
   const [ownFleet, setOwnFleet] = useState<Fleet | null>(loadStoredFleet)
   const [sample, setSample] = useState<SampleId | 'own'>(ownFleet ? 'own' : 'toronto')
   const [baseFleet, setBaseFleet] = useState<Fleet | null>(null)
-  const [fleet, setFleet] = useState<Fleet | null>(null)
+  // The fleet on screen as loaded, with the source it came from. Edits are kept apart so weather and reloads of the source cannot undo them.
+  const [loaded, setLoaded] = useState<{ source: SampleId | 'own'; fleet: Fleet } | null>(null)
+  const [edits, setEdits] = useState<Partial<Record<SampleId | 'own', VehicleEdits>>>({})
+  const fleet = useMemo(() => loaded && withEdits(loaded.fleet, edits[loaded.source]), [loaded, edits])
   const [weather, setWeather] = useState<{ state: 'loading' | 'archive' | 'climate'; matched?: number; total?: number }>({ state: 'loading' })
   const [temp, setTemp] = useState<TempMode>({ mode: 'observed' })
   const [stress, setStress] = useState<StressWeek | null>(null)
@@ -108,7 +112,7 @@ export default function Tool() {
   // Weather upgrades the fleet in the background. The climate profile keeps the app working until then, and offline.
   useEffect(() => {
     if (!baseFleet) return
-    setFleet(baseFleet)
+    setLoaded({ source: sample, fleet: baseFleet })
     setDay(null)
     setSelected(null)
     setAssignment({})
@@ -125,11 +129,13 @@ export default function Tool() {
       (w) => {
         if (ac.signal.aborted) return
         setWeather(w.matched ? { state: 'archive', matched: w.matched, total: w.total } : { state: 'climate' })
-        if (w.matched) setFleet(w.fleet)
+        if (w.matched) setLoaded({ source: sample, fleet: w.fleet })
       },
       () => { if (!ac.signal.aborted) setWeather({ state: 'climate' }) },
     )
     return () => ac.abort()
+    // A new sample always brings a new baseFleet, so the source is read when that arrives.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [baseFleet])
 
   const deferredTemp = useDeferredValue(temp)
@@ -168,9 +174,14 @@ export default function Tool() {
     }
   }
 
-  const onImported = (f: Fleet) => {
+  const keepFleet = (f: Fleet) => {
     const saved = saveFleet(f)
     setStoreNote(saved === 'no-paths' ? 'Too large to keep map lines between visits, so only trips were saved in this browser.' : saved === 'too-big' ? 'Too large to keep between visits. It works until you close this tab.' : '')
+  }
+
+  const onImported = (f: Fleet) => {
+    keepFleet(f)
+    setEdits(({ own: _, ...rest }) => rest)
     setOwnFleet(f)
     setSample('own')
     setTab('Overview')
@@ -180,18 +191,18 @@ export default function Tool() {
   const clearOwn = () => {
     saveFleet(null)
     setOwnFleet(null)
+    setEdits(({ own: _, ...rest }) => rest)
     setStoreNote('')
     setSample('toronto')
     flash('Your fleet was removed from this browser')
   }
 
   const setVehicle = (id: string, p: { cls?: VClass; loadKg?: number }) => {
-    if (!fleet || !baseFleet) return
-    const patch = (f: Fleet): Fleet => ({ ...f, vehicles: f.vehicles.map((v) => (v.id === id ? { ...v, ...p } : v)) })
-    invalidateFleet(fleet)
-    invalidateFleet(baseFleet)
-    setFleet(patch(fleet))
-    if (sample === 'own' && ownFleet) saveFleet(patch(ownFleet))
+    if (!loaded) return
+    const { source } = loaded
+    const next: VehicleEdits = { ...edits[source], [id]: { ...edits[source]?.[id], ...p } }
+    setEdits({ ...edits, [source]: next })
+    if (source === 'own' && ownFleet) keepFleet(withEdits(ownFleet, next))
     if (p.cls) setAssignment(({ [id]: _, ...rest }) => rest)
   }
 

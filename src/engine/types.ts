@@ -46,6 +46,9 @@ export interface Vehicle {
   rtbPct: number | null
 }
 
+/** Class and load changes by vehicle id. */
+export type VehicleEdits = Record<string, Partial<Pick<Vehicle, 'cls' | 'loadKg'>>>
+
 export interface Fleet {
   name: string
   synthetic: boolean
