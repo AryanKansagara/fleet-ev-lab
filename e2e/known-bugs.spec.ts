@@ -1,4 +1,4 @@
-// Each test states the correct behaviour of an open bug. test.fail flips to a plain test in the PR that fixes it.
+// Each test states the correct behaviour of a reported bug. test.fail flips to a plain test in the PR that fixes it.
 import { test, expect as slow, importFleet, upload, alert, status, result, tab, kpi, openLab, openExport, setTemp, pointsCsv, gpx, north, track, TRIP } from './fixtures.ts'
 
 const expect = slow.configure({ timeout: 20_000 })
@@ -7,17 +7,17 @@ const trips = (head: string, ...rows: string[]) => [head, ...rows].join('\n') + 
 
 test.describe('clock changes at a 15-degree longitude line', () => {
   // 60 steps of 0.02 degree longitude at 43 N: 6371 x cos(43) x pi/180 x 1.2 = 97.6 km in one hour, across 82.5 W.
-  test.fail('a drive west across 82.5 W keeps its length and duration', async ({ page }) => {
+  test('a drive west across 82.5 W keeps its length and duration', async ({ page }) => {
     await importFleet(page, 'p.csv', pointsCsv(track(61, (i) => [43, -81.9 - i * 0.02], 'Van 1', 'Z')))
     await expect(status(page)).toContainText('1 vehicles · 1 trips')
     expect(await result(page, 'Van 1')).toMatchObject({ avg_day_km: '97.6' })
   })
-  test.fail('a short trip that starts and ends in different bands is kept', async ({ page }) => {
+  test('a short trip that starts and ends in different bands is kept', async ({ page }) => {
     await importFleet(page, 't.csv', trips('vehicle,start,end,distance,start lat,start lng,end lat,end lng',
       'Van 1,2026-01-05T13:00:00Z,2026-01-05T13:40:00Z,60,43,-82,43,-83', 'Van 1,2026-01-05T15:00:00Z,2026-01-05T15:40:00Z,60,43,-83,43,-82'))
     await expect(status(page)).toContainText('1 vehicles · 2 trips')
   })
-  test.fail('a Trips2 file with Z stamps and only a stop point imports', async ({ page }) => {
+  test('a Trips2 file with Z stamps and only a stop point imports', async ({ page }) => {
     await importFleet(page, 't.csv', trips('DeviceId,Start,Stop,Distance,StopPointX,StopPointY', '27,2026-01-14T12:02:11Z,2026-01-14T12:31:32Z,18.4,-79.4102,43.6561'))
     expect(await result(page, '27')).toMatchObject({ avg_day_km: '18.4' })
   })

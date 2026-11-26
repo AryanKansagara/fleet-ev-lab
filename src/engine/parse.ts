@@ -182,6 +182,21 @@ const num = (s: string | undefined) => {
   return Number.isFinite(n) ? n : undefined
 }
 
+/**
+ * One longitude per vehicle, the median of its positions, to take its time zone from. A zone must not change inside a
+ * vehicle's data: a clock that jumps an hour at a 15-degree line reorders fixes and stretches or inverts trips.
+ */
+function homeLngs(at: Iterable<[vehicle: string, lat: number | undefined, lng: number | undefined]>): Map<string, number> {
+  const all = new Map<string, number[]>()
+  for (const [v, lat, lng] of at) {
+    if (lng === undefined || !(Math.abs(lng) <= 180) || (lng === 0 && !lat)) continue
+    const list = all.get(v)
+    if (list) list.push(lng)
+    else all.set(v, [lng])
+  }
+  return new Map([...all].map(([v, list]) => [v, list.sort((a, b) => a - b)[list.length >> 1]]))
+}
+
 /** Coordinates never carry a thousands separator, so any comma is a decimal comma. */
 const coord = (s: string | undefined) => num(s?.replace(',', '.'))
 
@@ -211,10 +226,13 @@ export function rowsToPoints(rows: string[][], map: ColumnMap, units: Units = DE
   const dk = units.distance === 'mi' ? 1.60934 : 1
   const sk = SPEED_K[units.speed] ?? 1
   const lk = units.load === 'lb' ? 0.453592 : 1
+  const vehicleOf = (r: string[]) => r[map.vehicle ?? -1]?.trim() || fallbackVehicle
+  const home = homeLngs(rows.map((r) => [vehicleOf(r), coord(r[map.lat ?? -1]), coord(r[map.lng ?? -1])]))
   for (const r of rows) {
+    const vehicle = vehicleOf(r)
     const lat = coord(r[map.lat ?? -1])
     const lng = coord(r[map.lng ?? -1])
-    const t = parseTime(r[map.timestamp ?? -1] ?? '', lng)
+    const t = parseTime(r[map.timestamp ?? -1] ?? '', home.get(vehicle))
     if (lat === undefined || lng === undefined || t === null) {
       bad++
       continue
@@ -223,7 +241,7 @@ export function rowsToPoints(rows: string[][], map: ColumnMap, units: Units = DE
     const odo = num(r[map.odometer ?? -1])
     const load = num(r[map.load ?? -1])
     points.push({
-      vehicle: r[map.vehicle ?? -1]?.trim() || fallbackVehicle,
+      vehicle,
       t,
       lat,
       lng,
@@ -246,11 +264,14 @@ export function rowsToTrips(rows: string[][], map: ColumnMap, units: Units = DEF
   let bad = 0
   const dk = units.distance === 'mi' ? 1.60934 : 1
   const lk = units.load === 'lb' ? 0.453592 : 1
+  const vehicleOf = (r: string[]) => r[map.vehicle ?? -1]?.trim() || fallbackVehicle
+  const home = homeLngs(rows.flatMap((r) => (['start', 'end'] as const).map((e): [string, number | undefined, number | undefined] => [vehicleOf(r), coord(r[map[`${e}Lat`] ?? -1]), coord(r[map[`${e}Lng`] ?? -1])])))
   for (const r of rows) {
+    const vehicle = vehicleOf(r)
     const startLng = coord(r[map.startLng ?? -1])
     const endLng = coord(r[map.endLng ?? -1])
-    const start = parseTime(r[map.start ?? -1] ?? '', startLng)
-    const end = parseTime(r[map.end ?? -1] ?? '', endLng ?? startLng)
+    const start = parseTime(r[map.start ?? -1] ?? '', home.get(vehicle))
+    const end = parseTime(r[map.end ?? -1] ?? '', home.get(vehicle))
     const dist = num(r[map.distance ?? -1])
     if (start === null || end === null || dist === undefined || end <= start || dist < 0) {
       bad++
@@ -264,7 +285,7 @@ export function rowsToTrips(rows: string[][], map: ColumnMap, units: Units = DEF
     const startLat = coord(r[map.startLat ?? -1])
     const endLat = coord(r[map.endLat ?? -1])
     trips.push({
-      vehicle: r[map.vehicle ?? -1]?.trim() || fallbackVehicle,
+      vehicle,
       start,
       end,
       km,
@@ -282,7 +303,7 @@ const GENERIC_TRACK = /^(active log|current track|track|untitled|\d{4}-\d{2}-\d{
 
 /** Minimal GPX reader for tracks and routes. Each track name becomes a vehicle unless one is provided. */
 export function parseGpx(xml: string, fallbackVehicle = 'Vehicle 1'): GpsPoint[] {
-  const points: GpsPoint[] = []
+  const found: (Omit<GpsPoint, 't'> & { time: string })[] = []
   const tracks = xml.match(/<trk[\s>][\s\S]*?<\/trk>/g) ?? [xml]
   for (const trk of tracks) {
     // Only the track's own name, before its first segment. Garmin and Strava name tracks by date or activity, which is not a vehicle.
@@ -292,13 +313,16 @@ export function parseGpx(xml: string, fallbackVehicle = 'Vehicle 1'): GpsPoint[]
       const lat = Number(m[1].match(/lat=["']([^"']+)/)?.[1])
       const lng = Number(m[1].match(/lon=["']([^"']+)/)?.[1])
       const body = m[2] ?? ''
-      const t = parseTime(body.match(/<time>([^<]+)/)?.[1] ?? '', lng)
-      if (!Number.isFinite(lat) || !Number.isFinite(lng) || t === null) continue
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue
       const speedMs = Number(body.match(/<(?:\w+:)?speed>([^<]+)/)?.[1])
-      points.push({ vehicle: name, t, lat, lng, speedKph: Number.isFinite(speedMs) ? speedMs * 3.6 : undefined })
+      found.push({ vehicle: name, time: body.match(/<time>([^<]+)/)?.[1] ?? '', lat, lng, speedKph: Number.isFinite(speedMs) ? speedMs * 3.6 : undefined })
     }
   }
-  return points
+  const home = homeLngs(found.map((p) => [p.vehicle, p.lat, p.lng]))
+  return found.flatMap(({ time, ...p }) => {
+    const t = parseTime(time, home.get(p.vehicle))
+    return t === null ? [] : [{ ...p, t }]
+  })
 }
 
 export const guessClass = (id: string): VClass => {
@@ -330,11 +354,12 @@ export function parseGeotabJson(text: string, fallbackVehicle = 'Vehicle 1'): { 
   const items = (data.every(Array.isArray) ? data.flat() : data).filter((o): o is GeoItem => !!o && typeof o === 'object')
   if (!items.length) return null
   if ('latitude' in items[0] && 'dateTime' in items[0]) {
+    const home = homeLngs(items.map((o) => [deviceName(o, fallbackVehicle), Number(o.latitude), Number(o.longitude)]))
     const points: GpsPoint[] = []
     for (const o of items) {
       const lat = Number(o.latitude)
       const lng = Number(o.longitude)
-      const t = parseTime(String(o.dateTime ?? ''), lng)
+      const t = parseTime(String(o.dateTime ?? ''), home.get(deviceName(o, fallbackVehicle)))
       if (!Number.isFinite(lat) || !Number.isFinite(lng) || t === null) continue
       const speed = Number(o.speed)
       points.push({ vehicle: deviceName(o, fallbackVehicle), t, lat, lng, speedKph: Number.isFinite(speed) && speed >= 0 ? speed : undefined })
@@ -342,12 +367,15 @@ export function parseGeotabJson(text: string, fallbackVehicle = 'Vehicle 1'): { 
     return { points }
   }
   if ('start' in items[0] && 'stop' in items[0] && 'distance' in items[0]) {
+    const stopOf = (o: GeoItem) => o.stopPoint as { x?: number; y?: number } | undefined
+    const home = homeLngs(items.map((o) => [deviceName(o, fallbackVehicle), stopOf(o)?.y, stopOf(o)?.x]))
     const trips: Trip[] = []
     for (const o of items) {
-      const sp = o.stopPoint as { x?: number; y?: number } | undefined
+      const sp = stopOf(o)
       const to: LatLng | undefined = sp && Number.isFinite(sp.x) && Number.isFinite(sp.y) ? [sp.y!, sp.x!] : undefined
-      const start = parseTime(String(o.start ?? ''), to?.[1])
-      const end = parseTime(String(o.stop ?? ''), to?.[1])
+      const lng = home.get(deviceName(o, fallbackVehicle))
+      const start = parseTime(String(o.start ?? ''), lng)
+      const end = parseTime(String(o.stop ?? ''), lng)
       const km = Number(o.distance)
       if (start === null || end === null || end <= start || !Number.isFinite(km) || km < 0) continue
       const hours = (end - start) / 3600e3
