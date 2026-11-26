@@ -55,6 +55,8 @@ export interface Fleet {
   depots: Depot[]
   /** Import diagnostics. */
   stats?: { points: number; droppedJumps: number; droppedInvalid: number }
+  /** What the import could not read, shown with the results. */
+  notes?: string[]
 }
 
 export interface EvModel {

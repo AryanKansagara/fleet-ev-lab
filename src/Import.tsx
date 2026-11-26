@@ -1,5 +1,5 @@
 import { useRef, useState, type DragEvent } from 'react'
-import { DEFAULT_UNITS, guessHeaderless, guessMapping, parseCsv, parseGeotabJson, parseGpx, POINT_FIELDS, rowsToPoints, rowsToTrips, TRIP_FIELDS, type ColumnMap, type Field, type Units } from './engine/parse.ts'
+import { DEFAULT_UNITS, guessHeaderless, gpxCutOff, guessMapping, parseGeotabJson, parseGpx, POINT_FIELDS, readCsv, rowsToPoints, rowsToTrips, TRIP_FIELDS, type ColumnMap, type Field, type Tally, type Units } from './engine/parse.ts'
 import { assembleFleet, DEFAULT_SEGMENT, fleetFromPoints } from './engine/segment.ts'
 import type { Fleet, GpsPoint, VClass } from './engine/types.ts'
 import { NumField } from './ui.tsx'
@@ -9,6 +9,13 @@ const LABEL: Record<Field, string> = {
   start: 'Trip start', end: 'Trip end', distance: 'Distance', idle: 'Idle minutes (optional)', startLat: 'Start lat (optional)', startLng: 'Start lng (optional)', endLat: 'End lat (optional)', endLng: 'End lng (optional)',
 }
 const REQUIRED: Record<'points' | 'trips', Field[]> = { points: ['timestamp', 'lat', 'lng'], trips: ['start', 'end', 'distance'] }
+
+/** Notes for the results when something in the file was not read. */
+const unread = (t: Tally, what: string, ...more: string[]) => {
+  const notes = [...(t.bad ? [`${t.bad.toLocaleString('en-CA')} of ${t.total.toLocaleString('en-CA')} ${what} could not be read`] : []), ...more]
+  return notes.length ? notes : undefined
+}
+const cutOff = (name: string) => `${name} is cut off: its end is missing`
 
 interface Pending {
   name: string
@@ -20,7 +27,7 @@ interface Pending {
 
 export default function Import({ onFleet }: { onFleet: (f: Fleet) => void }) {
   const [pending, setPending] = useState<Pending | null>(null)
-  const [gpx, setGpx] = useState<{ name: string; points: GpsPoint[] } | null>(null)
+  const [gpx, setGpx] = useState<{ name: string; points: GpsPoint[]; notes?: string[] } | null>(null)
   const [units, setUnits] = useState<Units>(DEFAULT_UNITS)
   const [stopMin, setStopMin] = useState(DEFAULT_SEGMENT.stopMinutes)
   const [maxKph, setMaxKph] = useState(DEFAULT_SEGMENT.maxKph)
@@ -36,20 +43,23 @@ export default function Import({ onFleet }: { onFleet: (f: Fleet) => void }) {
     setGpx(null)
     setPending(null)
     if (/^\s*<(\?xml|gpx)/i.test(text)) {
-      const points = parseGpx(text, name.replace(/\.[^.]+$/, ''))
+      const tally = { total: 0, bad: 0 }
+      const points = parseGpx(text, name.replace(/\.[^.]+$/, ''), tally)
       if (!points.length) return setError('That GPX file has no timestamped track points. Trips need time to be segmented.')
-      setGpx({ name, points })
+      setGpx({ name, points, notes: unread(tally, 'points', ...(gpxCutOff(text) ? [cutOff(name)] : [])) })
       return
     }
     if (/^\s*[[{]/.test(text)) {
       const geo = parseGeotabJson(text, name.replace(/\.[^.]+$/, ''))
       if (!geo) return setError('That JSON is not a list of MyGeotab LogRecord or Trip objects.')
-      if ('trips' in geo) return finish(assembleFleet(geo.trips, { name, defaultCls: cls, defaultLoadKg: loadKg }))
+      const notes = unread(geo, 'records')
+      if ('trips' in geo) return finish(assembleFleet(geo.trips, { name, notes, defaultCls: cls, defaultLoadKg: loadKg }))
       if (!geo.points.length) return setError('Those LogRecords have no usable coordinates.')
-      setGpx({ name, points: geo.points })
+      setGpx({ name, points: geo.points, notes })
       return
     }
-    const rows = parseCsv(text)
+    const { rows, openAt } = readCsv(text)
+    if (openAt !== null) return setError(`Row ${openAt} opens a quote that never closes, so the rest of the file cannot be read. Fix that row, or check that the file is complete.`)
     const headless = rows[0] ? guessHeaderless(rows[0]) : null
     if (headless) {
       setUnits(DEFAULT_UNITS)
@@ -67,11 +77,23 @@ export default function Import({ onFleet }: { onFleet: (f: Fleet) => void }) {
     try {
       if (list.every((f) => /\.gpx$/i.test(f.name))) {
         // Several GPX files combine, with each file naming a vehicle when the track has no name.
-        const points = (await Promise.all(list.map(async (f) => parseGpx(await f.text(), f.name.replace(/\.[^.]+$/, ''))))).flat()
+        const tally = { total: 0, bad: 0 }
+        const problems: string[] = []
+        const points = (await Promise.all(list.map(async (f) => {
+          const text = await f.text()
+          const found = parseGpx(text, f.name.replace(/\.[^.]+$/, ''), tally)
+          if (gpxCutOff(text)) problems.push(cutOff(f.name))
+          else if (!found.length) problems.push(`${f.name} has no timestamped track points`)
+          return found
+        }))).flat()
         setError('')
         setPending(null)
         if (!points.length) return setError('Those GPX files have no timestamped track points.')
-        setGpx({ name: list.length > 1 ? `${list.length} GPX files` : list[0].name, points })
+        setGpx({ name: list.length > 1 ? `${list.length} GPX files` : list[0].name, points, notes: unread(tally, 'points', ...problems) })
+      } else if (list.length > 1) {
+        setPending(null)
+        setGpx(null)
+        setError('Choose one CSV or JSON file at a time, or several GPX files together. Nothing was read.')
       } else ingestText(list[0].name, await list[0].text())
     } catch {
       setError('Could not read that file.')
@@ -95,18 +117,18 @@ export default function Import({ onFleet }: { onFleet: (f: Fleet) => void }) {
   const build = () => {
     const seg = { ...DEFAULT_SEGMENT, stopMinutes: stopMin, maxKph }
     const opts = { defaultCls: cls, defaultLoadKg: loadKg }
-    if (gpx) return finish(fleetFromPoints(gpx.points, { name: gpx.name, ...opts }, seg))
+    if (gpx) return finish(fleetFromPoints(gpx.points, { name: gpx.name, notes: gpx.notes, ...opts }, seg))
     if (!pending) return
     const missing = REQUIRED[pending.kind].filter((f) => pending.map[f] === undefined)
     if (missing.length) return setError(`Map these columns first: ${missing.map((f) => LABEL[f]).join(', ')}.`)
     if (pending.kind === 'points') {
       const { points, bad } = rowsToPoints(pending.rows, pending.map, units, pending.name.replace(/\.[^.]+$/, ''))
       if (!points.length) return setError(`None of the ${bad} rows could be read. Check the timestamp and coordinate columns.`)
-      finish(fleetFromPoints(points, { name: pending.name, ...opts }, seg))
+      finish(fleetFromPoints(points, { name: pending.name, notes: unread({ total: pending.rows.length, bad }, 'rows'), ...opts }, seg))
     } else {
       const { trips, bad } = rowsToTrips(pending.rows, pending.map, units, pending.name.replace(/\.[^.]+$/, ''))
       if (!trips.length) return setError(`None of the ${bad} rows could be read. Check the start, end and distance columns.`)
-      finish(assembleFleet(trips, { name: pending.name, ...opts }))
+      finish(assembleFleet(trips, { name: pending.name, notes: unread({ total: pending.rows.length, bad }, 'rows'), ...opts }))
     }
   }
 
@@ -159,7 +181,7 @@ export default function Import({ onFleet }: { onFleet: (f: Fleet) => void }) {
           </div>
         </div>
       ) : null}
-      {gpx ? <div className="card mapping"><h3>{gpx.name}</h3><p className="muted small">{gpx.points.length.toLocaleString('en-CA')} track points in {new Set(gpx.points.map((p) => p.vehicle)).size} vehicle(s).</p></div> : null}
+      {gpx ? <div className="card mapping"><h3>{gpx.name}</h3><p className="muted small">{gpx.points.length.toLocaleString('en-CA')} track points in {new Set(gpx.points.map((p) => p.vehicle)).size} vehicle(s).</p>{gpx.notes ? <p className="error small" role="alert">{gpx.notes.join('. ')}.</p> : null}</div> : null}
 
       {pending || gpx ? (
         <div className="card mapping">
